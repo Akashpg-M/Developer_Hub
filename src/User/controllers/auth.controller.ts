@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import { User } from '../models/User';
-import { authService } from '../services/auth.service';
+import { User } from '../User/models/User';
+import { authService } from '../User/services/auth.service';
 import { validationResult } from 'express-validator';
 
 export const register = async (req: Request, res: Response) => {
