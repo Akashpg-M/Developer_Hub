@@ -1,15 +1,13 @@
 import jwt, { TokenExpiredError, JsonWebTokenError, SignOptions } from 'jsonwebtoken';
-import { User } from '../models/user.model';
 
 interface TokenPayload {
   userId: string;
-  purpose?: 'email-verification' | 'password-reset';
 }
 
 // Generate Access Token
-export const generateAccessToken = (user: User): string => {
+export const generateAccessToken = (user: { id: string }): string => {
   const options: SignOptions = {
-    expiresIn: (process.env.JWT_ACCESS_EXPIRES_IN || '15m') as jwt.SignOptions['expiresIn'],
+    expiresIn: (process.env.JWT_ACCESS_EXPIRES_IN || '1h') as jwt.SignOptions['expiresIn'],
   };
   return jwt.sign(
     { userId: user.id },
@@ -19,7 +17,7 @@ export const generateAccessToken = (user: User): string => {
 };
 
 // Generate Refresh Token
-export const generateRefreshToken = (user: User): string => {
+export const generateRefreshToken = (user: { id: string }): string => {
   const options: SignOptions = {
     expiresIn: (process.env.JWT_REFRESH_EXPIRES_IN || '7d') as jwt.SignOptions['expiresIn'],
   };
@@ -58,26 +56,4 @@ export const verifyRefreshToken = (token: string): TokenPayload => {
     }
     throw error;
   }
-};
-
-// Generate Email Verification Token
-export const generateEmailVerificationToken = (user: User): string => {
-  return jwt.sign(
-    { userId: user.id, purpose: 'email-verification' },
-    process.env.JWT_ACCESS_SECRET!,
-    {
-      expiresIn: '24h',
-    }
-  );
-};
-
-// Generate Password Reset Token
-export const generatePasswordResetToken = (user: User): string => {
-  return jwt.sign(
-    { userId: user.id, purpose: 'password-reset' },
-    process.env.JWT_ACCESS_SECRET!,
-    {
-      expiresIn: '1h',
-    }
-  );
 };

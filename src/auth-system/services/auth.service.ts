@@ -1,99 +1,165 @@
-import { AppDataSource } from '../config/db';
-import { User, AuthProvider } from '../models/user.model';
-import { compare } from '../utils/hash';
+import { PrismaClient } from '@prisma/client';
+import jwt from 'jsonwebtoken';
 import { generateAccessToken, generateRefreshToken } from '../utils/token';
-import { ValidationError } from '../middlewares/validate';
+import { hash, compare } from '../utils/hash';
+
+const prisma = new PrismaClient();
 
 export class AuthService {
-  private userRepository = AppDataSource.getRepository(User);
-
   async signup(name: string, email: string, password: string) {
-    const existingUser = await this.userRepository.findOne({
-      where: { email }
-    });
+    try {
+      const existingUser = await prisma.user.findUnique({ where: { email } });
+      if (existingUser) {
+        throw new Error('Email already registered');
+      }
 
-    if (existingUser) {
-      throw new ValidationError([{ msg: 'Email already registered' }]);
+      const hashedPassword = await hash(password);
+
+      const user = await prisma.user.create({
+        data: {
+          name,
+          email,
+          password: hashedPassword,
+          provider: 'LOCAL',
+          isEmailVerified: false,
+        },
+      });
+
+      const accessToken = generateAccessToken(user);
+      const refreshToken = generateRefreshToken(user);
+
+      // Store refresh token in database
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { refreshToken }
+      });
+
+      return { user, accessToken, refreshToken };
+    } catch (error) {
+      console.error('Error in signup:', error);
+      throw error;
     }
-
-    const user = this.userRepository.create({
-      name,
-      email,
-      password,
-      provider: AuthProvider.LOCAL
-    });
-
-    await this.userRepository.save(user);
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
-
-    user.refreshToken = refreshToken;
-    await this.userRepository.save(user);
-
-    return { user, accessToken, refreshToken };
   }
 
   async login(email: string, password: string) {
-    const user = await this.userRepository.findOne({
-      where: { email }
-    });
+    try {
+      const user = await prisma.user.findUnique({ where: { email } });
 
-    if (!user || !user.password) {
-      throw new ValidationError([{ msg: 'Invalid credentials' }]);
+      if (!user || !user.password) {
+        throw new Error('Invalid credentials');
+      }
+
+      const isPasswordValid = await compare(password, user.password);
+      if (!isPasswordValid) {
+        throw new Error('Invalid credentials');
+      }
+
+      const accessToken = generateAccessToken(user);
+      const refreshToken = generateRefreshToken(user);
+
+      // Store refresh token in database
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { refreshToken }
+      });
+
+      return { user, accessToken, refreshToken };
+    } catch (error) {
+      console.error('Error in login:', error);
+      throw error;
     }
-
-    const isValidPassword = await compare(password, user.password);
-    if (!isValidPassword) {
-      throw new ValidationError([{ msg: 'Invalid credentials' }]);
-    }
-
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
-
-    user.refreshToken = refreshToken;
-    await this.userRepository.save(user);
-
-    return { user, accessToken, refreshToken };
   }
 
   async refreshToken(refreshToken: string) {
-    const user = await this.userRepository.findOne({
-      where: { refreshToken }
-    });
+    try {
+      const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET!) as { userId: string };
 
-    if (!user) {
-      throw new ValidationError([{ msg: 'Invalid refresh token' }]);
+      const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Check if refresh token is null (user has logged out)
+      if (!user.refreshToken) {
+        throw new Error('User has logged out');
+      }
+
+      const newAccessToken = generateAccessToken(user);
+      const newRefreshToken = generateRefreshToken(user);
+
+      // Update the refresh token in database
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { refreshToken: newRefreshToken }
+      });
+
+      return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+    } catch (error) {
+      console.error('Error in refreshToken:', error);
+      if (error instanceof Error && error.message === 'User not found') {
+        throw error;
+      }
+      if (error instanceof Error && error.message === 'User has logged out') {
+        throw error;
+      }
+      throw new Error('Invalid refresh token');
     }
-
-    const accessToken = generateAccessToken(user);
-    const newRefreshToken = generateRefreshToken(user);
-
-    user.refreshToken = newRefreshToken;
-    await this.userRepository.save(user);
-
-    return { accessToken, refreshToken: newRefreshToken };
   }
 
-  async logout(userId: string) {
-    const user = await this.userRepository.findOne({
-      where: { id: userId }
-    });
+  async logout(userId: string): Promise<boolean> {
+    try {
+      // Verify user exists
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
 
-    if (user) {
-      user.refreshToken = undefined;
-      await this.userRepository.save(user);
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Clear the refresh token
+      await prisma.user.update({
+        where: { id: userId },
+        data: { refreshToken: null }
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Error in logout:', error);
+      throw error;
     }
   }
 
   async getCurrentUser(userId: string) {
-    const user = await this.userRepository.findOne({
-      where: { id: userId }
-    });
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          provider: true,
+          isEmailVerified: true,
+          role: true,
+          refreshToken: true,
+        },
+      });
 
-    if (!user) {
-      throw new ValidationError([{ msg: 'User not found' }]);
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Check if user has logged out (refresh token is null)
+      if (!user.refreshToken) {
+        throw new Error('User has logged out');
+      }
+
+      // Remove refreshToken from response
+      const { refreshToken, ...userWithoutToken } = user;
+      return userWithoutToken;
+    } catch (error) {
+      console.error('Error in getCurrentUser:', error);
+      throw error;
     }
-
-    return user;
   }
-} 
+}

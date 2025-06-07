@@ -1,11 +1,16 @@
 import { Request, Response, NextFunction } from 'express';
-import { AuthService } from '../src/services/auth.service';
-import { User } from '../src/models/user.model';
+import { AuthService } from '../services/auth.service';
 
 declare global {
   namespace Express {
     interface Request {
-      user?: User;
+      user?: {
+        id: string;
+        name: string;
+        email: string;
+        provider: string;
+        isEmailVerified: boolean;
+      };
     }
   }
 }
@@ -49,8 +54,7 @@ export class AuthController {
 
   logout = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const userId = (req.user as { id: string }).id;
-      await this.authService.logout(userId);
+      await this.authService.logout(req.user!.id);
       res.status(204).send();
     } catch (error) {
       next(error);
@@ -59,8 +63,7 @@ export class AuthController {
 
   getCurrentUser = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const userId = (req.user as { id: string }).id;
-      const user = await this.authService.getCurrentUser(userId);
+      const user = await this.authService.getCurrentUser(req.user!.id);
       res.json(user);
     } catch (error) {
       next(error);
