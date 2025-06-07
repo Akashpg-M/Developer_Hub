@@ -1,25 +1,41 @@
 import { Request, Response, NextFunction } from 'express';
-import { CommunityService } from '../services/community.service';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 export class CommunityController {
-  private communityService: CommunityService;
-
-  constructor() {
-    this.communityService = new CommunityService();
-  }
-
-  listMembers = async (req: Request, res: Response, next: NextFunction) => {
+  async listMembers(req: Request, res: Response, next: NextFunction): Promise<void | Response> {
     try {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
-      const result = await this.communityService.listMembers(page, limit);
-      res.json(result);
-    } catch (error) {
-      next(error);
-    }
-  };
 
-  searchMembers = async (req: Request, res: Response, next: NextFunction) => {
+      const [members, total] = await Promise.all([
+        prisma.communityMember.findMany({
+          include: {
+            user: true
+          },
+          skip: (page - 1) * limit,
+          take: limit,
+          orderBy: [
+            { points: 'desc' },
+            { joinedAt: 'desc' }
+          ]
+        }),
+        prisma.communityMember.count()
+      ]);
+
+      return res.json({
+        members,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit)
+      });
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async searchMembers(req: Request, res: Response, next: NextFunction): Promise<void | Response> {
     try {
       const { query } = req.query;
       const page = parseInt(req.query.page as string) || 1;
@@ -29,20 +45,59 @@ export class CommunityController {
         return res.status(400).json({ message: 'Search query is required' });
       }
 
-      const result = await this.communityService.searchMembers(query as string, page, limit);
-      res.json(result);
-    } catch (error) {
-      next(error);
-    }
-  };
+      const [members, total] = await Promise.all([
+        prisma.communityMember.findMany({
+          where: {
+            OR: [
+              { user: { name: { contains: query as string, mode: 'insensitive' } } },
+              { user: { email: { contains: query as string, mode: 'insensitive' } } }
+            ]
+          },
+          include: {
+            user: true
+          },
+          skip: (page - 1) * limit,
+          take: limit,
+          orderBy: [
+            { points: 'desc' },
+            { joinedAt: 'desc' }
+          ]
+        }),
+        prisma.communityMember.count({
+          where: {
+            OR: [
+              { user: { name: { contains: query as string, mode: 'insensitive' } } },
+              { user: { email: { contains: query as string, mode: 'insensitive' } } }
+            ]
+          }
+        })
+      ]);
 
-  getMemberRank = async (req: Request, res: Response, next: NextFunction) => {
+      return res.json({
+        members,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit)
+      });
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async getMemberRank(req: Request, res: Response, next: NextFunction): Promise<void | Response> {
     try {
       const { userId } = req.params;
-      const rank = await this.communityService.getMemberRank(userId);
-      res.json({ rank });
+      const member = await prisma.communityMember.findFirst({
+        where: { userId }
+      });
+
+      if (!member) {
+        return res.status(404).json({ message: 'Member not found' });
+      }
+
+      return res.json({ rank: member.rank });
     } catch (error) {
-      next(error);
+      return next(error);
     }
-  };
+  }
 } 
