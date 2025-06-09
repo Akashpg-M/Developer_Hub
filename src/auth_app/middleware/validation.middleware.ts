@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
 import { AnyZodObject } from 'zod';
-import { validationResult } from 'express-validator';
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -11,19 +10,14 @@ export class ValidationError extends Error {
 
 export const validateRequest = (schema: AnyZodObject) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    try {   
-      schema.parse(req.body);
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        res.status(400).json({ errors: errors.array() });
-        return;
-      }
-      
+    try {
+      const validatedData = schema.parse(req.body);
+      req.body = validatedData; // Replace with validated data
       next();
     } catch (error) {
       console.error('Validation error:', error);
       if (error.errors) {
-        res.status(400).json({ errors: error.errors });
+        res.status(400).json({ error: error.errors });
         return;
       }
       res.status(400).json({ error: 'Validation failed' });

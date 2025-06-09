@@ -3,10 +3,9 @@ import { PrismaClient, Prisma, CommunityRole } from '@prisma/client';
 import { CommunityService } from './community.service';
 import { z } from 'zod';
 
-const prisma = new PrismaClient();
-const communityService = new CommunityService(prisma);
-
 // Validation schemas
+const communityIdSchema = z.string().min(1);
+
 const createCommunitySchema = z.object({
   name: z.string().min(3).max(50),
   description: z.string().min(10).max(500),
@@ -21,10 +20,8 @@ const updateCommunitySchema = z.object({
 
 const updateMemberRoleSchema = z.object({
   userId: z.string(),
-  role: z.nativeEnum(CommunityRole),
+  role: z.string().transform(val => val.trim()).pipe(z.nativeEnum(CommunityRole)),
 });
-
-const communityIdSchema = z.string();
 
 // Extend Express Request type
 interface AuthenticatedRequest extends Request {
@@ -39,8 +36,27 @@ interface AuthenticatedRequest extends Request {
 }
 
 export class CommunityController {
-  // Create a new community
-  async createCommunity(req: AuthenticatedRequest, res: Response) {
+  private prisma: PrismaClient;
+  private communityService: CommunityService;
+
+  constructor() {
+    this.prisma = new PrismaClient();
+    this.communityService = new CommunityService(this.prisma);
+    
+    // Bind all methods to preserve 'this' context
+    this.createCommunity = this.createCommunity.bind(this);
+    this.getCommunities = this.getCommunities.bind(this);
+    this.getCommunity = this.getCommunity.bind(this);
+    this.updateCommunity = this.updateCommunity.bind(this);
+    this.deleteCommunity = this.deleteCommunity.bind(this);
+    this.joinCommunity = this.joinCommunity.bind(this);
+    this.leaveCommunity = this.leaveCommunity.bind(this);
+    this.updateMemberRole = this.updateMemberRole.bind(this);
+    this.getCommunityMembers = this.getCommunityMembers.bind(this);
+    this.generateInviteLink = this.generateInviteLink.bind(this);
+  }
+
+  async createCommunity(req: AuthenticatedRequest, res: Response): Promise<Response> {
     try {
       if (!req.user) {
         return res.status(401).json({ error: 'Unauthorized' });
@@ -48,14 +64,15 @@ export class CommunityController {
       const validatedData = createCommunitySchema.parse(req.body);
       const userId = req.user.id;
 
-      const community = await communityService.createCommunity({
+      const community = await this.communityService.createCommunity({
         ...validatedData,
         isPrivate: validatedData.isPrivate ?? false,
-        creatorId: userId,
+        creatorId: userId
       });
 
       return res.status(201).json(community);
     } catch (error) {
+      console.log('Raw error in createCommunity:', error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
@@ -66,32 +83,32 @@ export class CommunityController {
     }
   }
 
-  // Get all communities
-  async getCommunities(req: Request, res: Response) {
+  async getCommunities(req: Request, res: Response): Promise<Response> {
     try {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
       const search = req.query.search as string;
 
-      const communities = await communityService.getCommunities({
+      const communities = await this.communityService.getCommunities({
         page,
         limit,
         search,
       });
 
-      res.json(communities);
+      return res.json(communities);
     } catch (error) {
-      res.status(500).json({ error: 'Internal server error' });
+      console.log('Raw error in getCommunities:', error);
+      return res.status(500).json({ error: 'Internal server error' });
     }
   }
 
-  // Get a specific community
-  async getCommunity(req: Request, res: Response) {
+  async getCommunity(req: Request, res: Response): Promise<Response> {
     try {
-      const id = communityIdSchema.parse(req.params.id);
-      const community = await communityService.getCommunityById(id);
+      const id = communityIdSchema.parse(req.params.communityId);
+      const community = await this.communityService.getCommunityById(id);
       return res.json(community);
     } catch (error) {
+      console.log('Raw error in getCommunity:', error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid community ID' });
       }
@@ -102,24 +119,24 @@ export class CommunityController {
     }
   }
 
-  // Update community
-  async updateCommunity(req: AuthenticatedRequest, res: Response) {
+  async updateCommunity(req: AuthenticatedRequest, res: Response): Promise<Response> {
     try {
       if (!req.user) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
-      const id = communityIdSchema.parse(req.params.id);
+      const id = communityIdSchema.parse(req.params.communityId);
       const updates = updateCommunitySchema.parse(req.body);
       const userId = req.user.id;
 
-      const isAdmin = await communityService.isUserAdmin(id, userId);
+      const isAdmin = await this.communityService.isUserAdmin(id, userId);
       if (!isAdmin) {
         return res.status(403).json({ error: 'Only admins can update community details' });
       }
 
-      const community = await communityService.updateCommunity(id, updates);
+      const community = await this.communityService.updateCommunity(id, updates);
       return res.json(community);
     } catch (error) {
+      console.log('Raw error in updateCommunity:', error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
@@ -130,21 +147,20 @@ export class CommunityController {
     }
   }
 
-  // Delete community
-  async deleteCommunity(req: AuthenticatedRequest, res: Response) {
+  async deleteCommunity(req: AuthenticatedRequest, res: Response): Promise<Response> {
     try {
       if (!req.user) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
-      const id = communityIdSchema.parse(req.params.id);
+      const id = communityIdSchema.parse(req.params.communityId);
       const userId = req.user.id;
 
-      const isAdmin = await communityService.isUserAdmin(id, userId);
+      const isAdmin = await this.communityService.isUserAdmin(id, userId);
       if (!isAdmin) {
         return res.status(403).json({ error: 'Only admins can delete the community' });
       }
 
-      const community = await prisma.community.findUnique({
+      const community = await this.prisma.community.findUnique({
         where: { id },
       });
 
@@ -152,9 +168,10 @@ export class CommunityController {
         return res.status(404).json({ error: 'Community not found' });
       }
 
-      await communityService.deleteCommunity(id);
+      await this.communityService.deleteCommunity(id);
       return res.status(204).send();
     } catch (error) {
+      console.log('Raw error in deleteCommunity:', error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid community ID' });
       }
@@ -162,18 +179,18 @@ export class CommunityController {
     }
   }
 
-  // Join community
-  async joinCommunity(req: AuthenticatedRequest, res: Response) {
+  async joinCommunity(req: AuthenticatedRequest, res: Response): Promise<Response> {
     try {
       if (!req.user) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
-      const id = communityIdSchema.parse(req.params.id);
+      const id = communityIdSchema.parse(req.params.communityId);
       const userId = req.user.id;
 
-      const membership = await communityService.joinCommunity(id, userId);
+      const membership = await this.communityService.joinCommunity(id, userId);
       return res.status(201).json(membership);
     } catch (error) {
+      console.log('Raw error in joinCommunity:', error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid community ID' });
       }
@@ -186,46 +203,84 @@ export class CommunityController {
     }
   }
 
-  // Leave community
-  async leaveCommunity(req: AuthenticatedRequest, res: Response) {
+  async leaveCommunity(req: AuthenticatedRequest, res: Response): Promise<Response> {
     try {
       if (!req.user) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
-      const id = communityIdSchema.parse(req.params.id);
+      const id = communityIdSchema.parse(req.params.communityId);
       const userId = req.user.id;
 
-      const result = await communityService.leaveCommunity(id, userId);
-      return res.status(200).json(result);
+      const community = await this.prisma.community.findUnique({ where: { id } });
+      if (!community) {
+        return res.status(404).json({ error: 'Community not found' });
+      }
+
+      const membership = await this.prisma.communityMember.findUnique({
+        where: {
+          communityId_userId: {
+            userId,
+            communityId: id,
+          },
+        },
+      });
+
+      if (!membership) {
+        return res.status(400).json({ error: 'You are not a member of this community' });
+      }
+
+      // If the leaving member is the owner, delete the entire community
+      if (membership.role === CommunityRole.OWNER) {
+        await this.communityService.deleteCommunity(id);
+        return res.status(200).json({ message: 'Community deleted as owner left' });
+      }
+
+      // For other roles, just remove the member
+      await this.prisma.communityMember.delete({
+        where: {
+          communityId_userId: {
+            userId,
+            communityId: id,
+          },
+        },
+      });
+
+      return res.status(200).json({ message: 'Left the community successfully' });
     } catch (error) {
+      console.log('Raw error in leaveCommunity:', error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid community ID' });
-      }
-      if (error.message === 'Cannot leave community as the last admin. Please assign another admin first.') {
-        return res.status(400).json({ error: error.message });
       }
       return res.status(500).json({ error: 'Internal server error' });
     }
   }
 
-  // Update member role
-  async updateMemberRole(req: AuthenticatedRequest, res: Response) {
+  async updateMemberRole(req: AuthenticatedRequest, res: Response): Promise<Response> {
     try {
-      if (!req.user) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
-      const id = communityIdSchema.parse(req.params.id);
+      if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+
+      const id = communityIdSchema.parse(req.params.communityId);
       const { userId, role } = updateMemberRoleSchema.parse(req.body);
-      const adminId = req.user.id;
+      const requesterId = req.user.id;
 
-      const isAdmin = await communityService.isUserAdmin(id, adminId);
+      const isAdmin = await this.communityService.isUserAdmin(id, requesterId);
       if (!isAdmin) {
-        return res.status(403).json({ error: 'Only admins can update member roles' });
+        return res.status(403).json({ error: 'Only admins can change roles' });
       }
 
-      const membership = await communityService.updateMemberRole(id, userId, role);
-      return res.json(membership);
+      const updated = await this.prisma.communityMember.update({
+        where: {
+          communityId_userId: {
+            userId,
+            communityId: id,
+          },
+        },
+        data: { role },
+      });
+
+      return res.status(200).json(updated);
     } catch (error) {
+      console.log('Raw error in updateMemberRole:', error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
@@ -233,16 +288,22 @@ export class CommunityController {
     }
   }
 
-  // Get community members
-  async getCommunityMembers(req: Request, res: Response) {
+  async getCommunityMembers(req: Request, res: Response): Promise<Response> {
     try {
-      const id = communityIdSchema.parse(req.params.id);
+      const id = communityIdSchema.parse(req.params.communityId);
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
 
-      const members = await communityService.getCommunityMembers(id, { page, limit });
+      const members = await this.prisma.communityMember.findMany({
+        where: { communityId: id },
+        include: { user: true },
+        skip: (page - 1) * limit,
+        take: limit,
+      });
+
       return res.json(members);
     } catch (error) {
+      console.log('Raw error in getCommunityMembers:', error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid community ID' });
       }
@@ -250,23 +311,23 @@ export class CommunityController {
     }
   }
 
-  // Generate invite link
-  async generateInviteLink(req: AuthenticatedRequest, res: Response) {
+  async generateInviteLink(req: AuthenticatedRequest, res: Response): Promise<Response> {
     try {
       if (!req.user) {
         return res.status(401).json({ error: 'Unauthorized' });
       }
-      const id = communityIdSchema.parse(req.params.id);
+      const id = communityIdSchema.parse(req.params.communityId);
       const userId = req.user.id;
 
-      const canInvite = await communityService.canInviteMembers(id, userId);
-      if (!canInvite) {
-        return res.status(403).json({ error: 'You do not have permission to generate invite links' });
+      const isAdmin = await this.communityService.isUserAdmin(id, userId);
+      if (!isAdmin) {
+        return res.status(403).json({ error: 'Only admins can generate invite links' });
       }
 
-      const inviteLink = await communityService.generateInviteLink(id);
+      const inviteLink = await this.communityService.generateInviteLink(id, userId);
       return res.json({ inviteLink });
     } catch (error) {
+      console.log('Raw error in generateInviteLink:', error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid community ID' });
       }

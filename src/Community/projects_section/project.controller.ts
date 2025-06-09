@@ -46,7 +46,7 @@ const checkCommunityMembership = async (userId: string, communityId: string) => 
   return member;
 };
 
-export const createProject = async (req: Request, res: Response) => {
+export const createProject = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { communityId } = communityIdSchema.parse(req.params);
     const body = createProjectSchema.parse(req.body);
@@ -57,7 +57,7 @@ export const createProject = async (req: Request, res: Response) => {
     roleGuard(member.role, [Permissions.CREATE_PROJECT]);
 
     const result = await createProjectService(userId, communityId, body);
-    res.status(201).json(result);
+    return res.status(201).json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.errors });
@@ -65,11 +65,11 @@ export const createProject = async (req: Request, res: Response) => {
     if (error.message === 'You are not a member of this community') {
       return res.status(403).json({ error: error.message });
     }
-    res.status(400).json({ error: (error as Error).message });
+    return res.status(400).json({ error: (error as Error).message });
   }
 };
 
-export const getProjectsInCommunity = async (req: Request, res: Response) => {
+export const getProjectsInCommunity = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { communityId } = communityIdSchema.parse(req.params);
     const userId = (req as any).user.id;
@@ -81,7 +81,7 @@ export const getProjectsInCommunity = async (req: Request, res: Response) => {
     const pageNumber = Number(req.query.pageNumber) || 1;
 
     const result = await getProjectsInCommunityService(communityId, pageSize, pageNumber);
-    res.json(result);
+    return res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.errors });
@@ -89,11 +89,11 @@ export const getProjectsInCommunity = async (req: Request, res: Response) => {
     if (error.message === 'You are not a member of this community') {
       return res.status(403).json({ error: error.message });
     }
-    res.status(400).json({ error: (error as Error).message });
+    return res.status(400).json({ error: (error as Error).message });
   }
 };
 
-export const getProjectByIdAndCommunityId = async (req: Request, res: Response) => {
+export const getProjectByIdAndCommunityId = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { communityId, projectId } = projectIdSchema.parse(req.params);
     const userId = (req as any).user.id;
@@ -102,7 +102,7 @@ export const getProjectByIdAndCommunityId = async (req: Request, res: Response) 
     await checkCommunityMembership(userId, communityId);
 
     const result = await getProjectByIdAndCommunityIdService(communityId, projectId);
-    res.json(result);
+    return res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.errors });
@@ -113,11 +113,11 @@ export const getProjectByIdAndCommunityId = async (req: Request, res: Response) 
     if (error.message.includes('not found')) {
       return res.status(404).json({ error: error.message });
     }
-    res.status(400).json({ error: (error as Error).message });
+    return res.status(400).json({ error: (error as Error).message });
   }
 };
 
-export const getProjectAnalytics = async (req: Request, res: Response) => {
+export const getProjectAnalytics = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { communityId, projectId } = projectIdSchema.parse(req.params);
     const userId = (req as any).user.id;
@@ -126,7 +126,7 @@ export const getProjectAnalytics = async (req: Request, res: Response) => {
     await checkCommunityMembership(userId, communityId);
 
     const result = await getProjectAnalyticsService(communityId, projectId);
-    res.json(result);
+    return res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.errors });
@@ -137,11 +137,11 @@ export const getProjectAnalytics = async (req: Request, res: Response) => {
     if (error.message.includes('not found')) {
       return res.status(404).json({ error: error.message });
     }
-    res.status(400).json({ error: (error as Error).message });
+    return res.status(400).json({ error: (error as Error).message });
   }
 };
 
-export const joinProject = async (req: Request, res: Response) => {
+export const joinProject = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { communityId, projectId } = projectIdSchema.parse(req.params);
     const userId = (req as any).user.id;
@@ -150,7 +150,7 @@ export const joinProject = async (req: Request, res: Response) => {
     await checkCommunityMembership(userId, communityId);
 
     const result = await joinProjectService(userId, communityId, projectId);
-    res.status(201).json(result);
+    return res.status(201).json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.errors });
@@ -161,11 +161,11 @@ export const joinProject = async (req: Request, res: Response) => {
     if (error.message.includes('not found')) {
       return res.status(404).json({ error: error.message });
     }
-    res.status(400).json({ error: (error as Error).message });
+    return res.status(400).json({ error: (error as Error).message });
   }
 };
 
-export const leaveProject = async (req: Request, res: Response) => {
+export const leaveProject = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { communityId, projectId } = projectIdSchema.parse(req.params);
     const userId = (req as any).user.id;
@@ -174,7 +174,7 @@ export const leaveProject = async (req: Request, res: Response) => {
     await checkCommunityMembership(userId, communityId);
 
     const result = await leaveProjectService(userId, communityId, projectId);
-    res.json(result);
+    return res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.errors });
@@ -185,11 +185,11 @@ export const leaveProject = async (req: Request, res: Response) => {
     if (error.message.includes('not found')) {
       return res.status(404).json({ error: error.message });
     }
-    res.status(400).json({ error: (error as Error).message });
+    return res.status(400).json({ error: (error as Error).message });
   }
 };
 
-export const getProjectMembers = async (req: Request, res: Response) => {
+export const getProjectMembers = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { communityId, projectId } = projectIdSchema.parse(req.params);
     const userId = (req as any).user.id;
@@ -201,7 +201,7 @@ export const getProjectMembers = async (req: Request, res: Response) => {
     const pageNumber = Number(req.query.pageNumber) || 1;
 
     const result = await getProjectMembersService(communityId, projectId, pageSize, pageNumber);
-    res.json(result);
+    return res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.errors });
@@ -212,11 +212,11 @@ export const getProjectMembers = async (req: Request, res: Response) => {
     if (error.message.includes('not found')) {
       return res.status(404).json({ error: error.message });
     }
-    res.status(400).json({ error: (error as Error).message });
+    return res.status(400).json({ error: (error as Error).message });
   }
 };
 
-export const updateProject = async (req: Request, res: Response) => {
+export const updateProject = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { communityId, projectId } = projectIdSchema.parse(req.params);
     const body = updateProjectSchema.parse(req.body);
@@ -227,7 +227,7 @@ export const updateProject = async (req: Request, res: Response) => {
     roleGuard(member.role, [Permissions.EDIT_PROJECT]);
 
     const result = await updateProjectService(communityId, projectId, userId, body);
-    res.json(result);
+    return res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.errors });
@@ -238,11 +238,11 @@ export const updateProject = async (req: Request, res: Response) => {
     if (error.message.includes('not found')) {
       return res.status(404).json({ error: error.message });
     }
-    res.status(400).json({ error: (error as Error).message });
+    return res.status(400).json({ error: (error as Error).message });
   }
 };
 
-export const deleteProject = async (req: Request, res: Response) => {
+export const deleteProject = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { communityId, projectId } = projectIdSchema.parse(req.params);
     const userId = (req as any).user.id;
@@ -251,8 +251,8 @@ export const deleteProject = async (req: Request, res: Response) => {
     const member = await checkCommunityMembership(userId, communityId);
     roleGuard(member.role, [Permissions.DELETE_PROJECT]);
 
-    const result = await deleteProjectService(communityId, projectId, userId);
-    res.json(result);
+    await deleteProjectService(communityId, projectId, userId);
+    return res.status(204).send();
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.errors });
@@ -263,6 +263,6 @@ export const deleteProject = async (req: Request, res: Response) => {
     if (error.message.includes('not found')) {
       return res.status(404).json({ error: error.message });
     }
-    res.status(400).json({ error: (error as Error).message });
+    return res.status(400).json({ error: (error as Error).message });
   }
 };

@@ -16,7 +16,6 @@ import { TaskStatus, TaskPriority } from '@prisma/client';
 
 const router = express.Router();
 
-
 const createTaskSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
@@ -24,6 +23,7 @@ const createTaskSchema = z.object({
   status: z.nativeEnum(TaskStatus).optional(),
   assignedTo: z.string().optional().nullable(),
   dueDate: z.date().optional(),
+  projectId: z.string().optional(), // Optional project reference
 });
 
 const updateTaskSchema = createTaskSchema.partial();
@@ -38,54 +38,54 @@ const assignTaskSchema = z.object({
 
 // Task CRUD routes
 router.post(
-  '/:communityId/:projectId',
+  '/:communityId/task',
   protectRoute,
   validateRequest(createTaskSchema),
   createTaskController
 );
 
 router.get(
-  '/:communityId',
+  '/:communityId/task',
   protectRoute,
   getAllTasksController
 );
 
 router.get(
-  '/:communityId/:projectId/:taskId',
+  '/:communityId/task/:taskId',
   protectRoute,
   getTaskByIdController
 );
 
 router.put(
-  '/:communityId/:projectId/:taskId',
+  '/:communityId/task/:taskId',
   protectRoute,
   validateRequest(updateTaskSchema),
   updateTaskController
 );
 
 router.delete(
-  '/:communityId/:projectId/:taskId',
+  '/:communityId/task/:taskId',
   protectRoute,
   deleteTaskController
 );
 
 // Task assignment routes
 router.post(
-  '/:communityId/:projectId/:taskId/assign',
+  '/:communityId/task/:taskId/assign',
   protectRoute,
   validateRequest(assignTaskSchema),
   assignTask
 );
 
 router.delete(
-  '/:communityId/:projectId/:taskId/unassign',
+  '/:communityId/task/:taskId/unassign',
   protectRoute,
   unassignTask
 );
 
 // Task status management
 router.patch(
-  '/:communityId/:projectId/:taskId/status',
+  '/:communityId/task/:taskId/status',
   protectRoute,
   validateRequest(updateStatusSchema),
   updateTaskStatus

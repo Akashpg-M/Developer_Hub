@@ -19,7 +19,7 @@ export const comparePassword = async (password: string, hashedPassword: string):
 // Token Generation
 export const generateAccessToken = (user: { id: string }): string => {
   const options: SignOptions = {
-    expiresIn: (process.env.JWT_ACCESS_EXPIRES_IN || '1h') as jwt.SignOptions['expiresIn'],
+    expiresIn: (process.env.JWT_ACCESS_EXPIRES_IN || '15m') as jwt.SignOptions['expiresIn'],
   };
   return jwt.sign(
     { userId: user.id },
@@ -96,13 +96,15 @@ export const verifyEmailToken = (token: string): TokenPayload => {
 
 // Cookie Management
 export const setAuthCookies = (res: Response, accessToken: string, refreshToken: string): void => {
+  // Set access token cookie (short-lived)
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 15 * 60 * 1000 // 15 minutes
   });
 
+  // Set refresh token cookie (long-lived)
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',

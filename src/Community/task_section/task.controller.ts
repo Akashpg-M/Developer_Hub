@@ -14,7 +14,6 @@ const prisma = new PrismaClient();
 
 // Validation schemas
 const taskIdSchema = z.string().min(1);
-const projectIdSchema = z.string().min(1);
 const communityIdSchema = z.string().min(1);
 
 const createTaskSchema = z.object({
@@ -24,27 +23,10 @@ const createTaskSchema = z.object({
   status: z.nativeEnum(TaskStatus).optional(),
   assignedTo: z.string().optional().nullable(),
   dueDate: z.date().optional(),
+  projectId: z.string().optional(),
 });
 
-const updateTaskSchema = z.object({
-  title: z.string().min(1).optional(),
-  description: z.string().optional(),
-  priority: z.nativeEnum(TaskPriority).optional(),
-  status: z.nativeEnum(TaskStatus).optional(),
-  assignedTo: z.string().optional().nullable(),
-  dueDate: z.date().optional(),
-});
-
-// Helper function to check project membership
-const checkProjectMembership = async (userId: string, projectId: string) => {
-  const member = await prisma.projectMember.findFirst({
-    where: { projectId, userId },
-  });
-  if (!member) {
-    throw new NotFoundException('You are not a member of this project');
-  }
-  return member;
-};
+const updateTaskSchema = createTaskSchema.partial();
 
 // Helper function to get member role in community
 const getMemberRoleInWorkspace = async (userId: string, communityId: string) => {
@@ -65,7 +47,6 @@ export const createTaskController = async (req: Request, res: Response) => {
     }
 
     const body = createTaskSchema.parse(req.body);
-    const projectId = projectIdSchema.parse(req.params.projectId);
     const communityId = communityIdSchema.parse(req.params.communityId);
 
     const { role } = await getMemberRoleInWorkspace(userId, communityId);
@@ -73,7 +54,6 @@ export const createTaskController = async (req: Request, res: Response) => {
 
     const { task } = await createTaskService(
       communityId,
-      projectId,
       userId,
       body
     );
@@ -105,7 +85,6 @@ export const updateTaskController = async (req: Request, res: Response) => {
 
     const body = updateTaskSchema.parse(req.body);
     const taskId = taskIdSchema.parse(req.params.taskId);
-    const projectId = projectIdSchema.parse(req.params.projectId);
     const communityId = communityIdSchema.parse(req.params.communityId);
 
     const { role } = await getMemberRoleInWorkspace(userId, communityId);
@@ -113,7 +92,6 @@ export const updateTaskController = async (req: Request, res: Response) => {
 
     const { updatedTask } = await updateTaskService(
       communityId,
-      projectId,
       taskId,
       body
     );
@@ -196,13 +174,12 @@ export const getTaskByIdController = async (req: Request, res: Response) => {
     }
 
     const taskId = taskIdSchema.parse(req.params.taskId);
-    const projectId = projectIdSchema.parse(req.params.projectId);
     const communityId = communityIdSchema.parse(req.params.communityId);
 
     const { role } = await getMemberRoleInWorkspace(userId, communityId);
     roleGuard(role, [Permissions.VIEW_ONLY]);
 
-    const task = await getTaskByIdService(communityId, projectId, taskId);
+    const task = await getTaskByIdService(communityId, taskId);
 
     return res.status(200).json({
       message: "Task fetched successfully",
@@ -262,7 +239,6 @@ export const assignTask = async (req: Request, res: Response) => {
     }
 
     const taskId = taskIdSchema.parse(req.params.taskId);
-    const projectId = projectIdSchema.parse(req.params.projectId);
     const communityId = communityIdSchema.parse(req.params.communityId);
     const { userId: assigneeId } = z.object({ userId: z.string().min(1) }).parse(req.body);
 
@@ -271,7 +247,6 @@ export const assignTask = async (req: Request, res: Response) => {
 
     const { updatedTask } = await updateTaskService(
       communityId,
-      projectId,
       taskId,
       { assignedTo: assigneeId }
     );
@@ -302,7 +277,6 @@ export const unassignTask = async (req: Request, res: Response) => {
     }
 
     const taskId = taskIdSchema.parse(req.params.taskId);
-    const projectId = projectIdSchema.parse(req.params.projectId);
     const communityId = communityIdSchema.parse(req.params.communityId);
 
     const { role } = await getMemberRoleInWorkspace(userId, communityId);
@@ -310,7 +284,6 @@ export const unassignTask = async (req: Request, res: Response) => {
 
     const { updatedTask } = await updateTaskService(
       communityId,
-      projectId,
       taskId,
       { assignedTo: null }
     );
@@ -341,7 +314,6 @@ export const updateTaskStatus = async (req: Request, res: Response) => {
     }
 
     const taskId = taskIdSchema.parse(req.params.taskId);
-    const projectId = projectIdSchema.parse(req.params.projectId);
     const communityId = communityIdSchema.parse(req.params.communityId);
     const { status } = z.object({ status: z.nativeEnum(TaskStatus) }).parse(req.body);
 
@@ -350,7 +322,6 @@ export const updateTaskStatus = async (req: Request, res: Response) => {
 
     const { updatedTask } = await updateTaskService(
       communityId,
-      projectId,
       taskId,
       { status }
     );

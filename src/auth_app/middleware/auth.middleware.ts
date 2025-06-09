@@ -1,6 +1,12 @@
-import jwt from "jsonwebtoken";
 import { Request, Response, NextFunction } from "express";
 import { PrismaClient } from '@prisma/client';
+import { 
+  verifyAccessToken, 
+  verifyRefreshToken, 
+  generateAccessToken, 
+  generateRefreshToken,
+  setAuthCookies 
+} from '../utils/auth.utils';
 
 const prisma = new PrismaClient();
 
@@ -13,10 +19,6 @@ export interface AuthenticatedRequest extends Request {
     isEmailVerified: boolean;
     role: string;
   };
-}
-
-interface TokenPayload {
-  userId: string;
 }
 
 declare global {
@@ -34,66 +36,78 @@ declare global {
   }
 }
 
-export const protectRoute = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+export const protectRoute = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const token = req.cookies.accessToken;
-    
-    if (!token) {
-      console.log('No token found in cookies:', req.cookies);
-      res.status(401).json({ message: 'Not authorized, no token' });
+    const accessToken = req.cookies.accessToken;
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!accessToken && !refreshToken) {
+      res.status(401).json({ message: 'Not authorized, no tokens' });
       return;
     }
 
-    if (!process.env.JWT_ACCESS_SECRET) {
-      console.error('JWT_ACCESS_SECRET is not configured in environment variables');
-      throw new Error('JWT_ACCESS_SECRET is not configured');
-    }
+    try {
+      // Try to verify access token first
+      const decoded = verifyAccessToken(accessToken);
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.userId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          provider: true,
+          isEmailVerified: true
+        }
+      });
 
-    console.log('Verifying token:', token);
-    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET) as TokenPayload;
-    console.log('Decoded token payload:', decoded);
-    
-    if (!decoded.userId) {
-      console.error('Token payload missing userId:', decoded);
-      throw new Error('Invalid token payload');
-    }
-
-    console.log('Finding user with ID:', decoded.userId);
-    prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        provider: true,
-        isEmailVerified: true
-      }
-    }).then(user => {
       if (!user) {
-        console.error('User not found for ID:', decoded.userId);
-        res.status(401).json({ message: 'User not found' });
-        return;
+        throw new Error('User not found');
       }
-      console.log('User found:', user);
+
       req.user = user;
       next();
-    }).catch(error => {
-      console.error('Database error in auth middleware:', {
-        error: error,
-        stack: error.stack,
-        message: error.message,
-        code: error.code
-      });
-      res.status(401).json({ message: 'Not authorized, token failed' });
-    });
+    } catch (error) {
+      // If access token is invalid or expired, try refresh token
+      if (error instanceof Error && error.message === 'Access token expired' && refreshToken) {
+        try {
+          const decoded = verifyRefreshToken(refreshToken);
+          const user = await prisma.user.findUnique({
+            where: { id: decoded.userId },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+              provider: true,
+              isEmailVerified: true
+            }
+          });
+
+          if (!user) {
+            throw new Error('User not found');
+          }
+
+          // Generate new tokens
+          const newAccessToken = generateAccessToken(user);
+          const newRefreshToken = generateRefreshToken(user);
+
+          // Set new cookies
+          setAuthCookies(res, newAccessToken, newRefreshToken);
+
+          req.user = user;
+          next();
+        } catch (refreshError) {
+          console.error('Refresh token error:', refreshError);
+          res.status(401).json({ message: 'Not authorized, refresh token failed' });
+        }
+      } else {
+        console.error('Access token error:', error);
+        res.status(401).json({ message: 'Not authorized, access token failed' });
+      }
+    }
   } catch (error) {
-    console.error('Auth middleware error:', {
-      error: error,
-      stack: error instanceof Error ? error.stack : 'No stack trace',
-      message: error instanceof Error ? error.message : 'Unknown error',
-      name: error instanceof Error ? error.name : 'Unknown error type'
-    });
+    console.error('Auth middleware error:', error);
     res.status(401).json({ message: 'Not authorized, token failed' });
   }
 };

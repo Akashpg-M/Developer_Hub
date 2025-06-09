@@ -1,60 +1,55 @@
 import { PrismaClient, Prisma } from '@prisma/client';
-import { NotFoundException, UnauthorizedException, TaskStatusEnum } from '../utils/roleManagement';
 
-const prisma = new PrismaClient() as any;
+const prisma = new PrismaClient();
 
 export const createProjectService = async (
   userId: string,
   communityId: string,
-  body: {
-    emoji?: string;
-    name: string;
-    description?: string;
-  }
+  data: { name: string; description?: string; emoji?: string }
 ) => {
-  try {
-    // Using transaction to ensure both project creation and member addition are atomic
-    const result = await prisma.$transaction(async (tx: any) => {
-      const project = await tx.project.create({
-        data: {
-          name: body.name,
-          description: body.description,
-          emoji: body.emoji || '📊',
-          communityId,
-          createdById: userId,
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Create the project
+    const project = await tx.project.create({
+      data: {
+        name: data.name,
+        description: data.description,
+        emoji: data.emoji,
+        communityId,
+        createdById: userId,
+      },
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            profilePicture: true,
+          },
         },
-        include: {
-          createdBy: {
-            select: {
-              id: true,
-              name: true,
-              profilePicture: true,
+        members: {
+          select: {
+            id: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                profilePicture: true,
+              },
             },
           },
         },
-      });
-
-      // Add creator as project leader
-      await tx.projectMember.create({
-        data: {
-          projectId: project.id,
-          userId: userId,
-          role: 'LEADER',
-        },
-      });
-
-      return project;
+      },
     });
 
-    return { project: result };
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === 'P2002') {
-        throw new Error('A project with this name already exists in this community');
-      }
-    }
-    throw error;
-  }
+    // Add creator as project member
+    await tx.projectMember.create({
+      data: {
+        projectId: project.id,
+        userId: userId,
+      },
+    });
+
+    return project;
+  });
 };
 
 export const getProjectsInCommunityService = async (
@@ -64,12 +59,14 @@ export const getProjectsInCommunityService = async (
 ) => {
   const skip = (pageNumber - 1) * pageSize;
 
-  const [totalCount, projects] = await Promise.all([
+  const [total, projects] = await Promise.all([
     prisma.project.count({
       where: { communityId },
     }),
     prisma.project.findMany({
-      where: { communityId },
+      where: {
+        communityId,
+      },
       skip,
       take: pageSize,
       include: {
@@ -83,7 +80,6 @@ export const getProjectsInCommunityService = async (
         members: {
           select: {
             id: true,
-            role: true,
             user: {
               select: {
                 id: true,
@@ -94,13 +90,18 @@ export const getProjectsInCommunityService = async (
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: {
+        createdAt: 'desc',
+      },
     }),
   ]);
 
-  const totalPages = Math.ceil(totalCount / pageSize);
-
-  return { projects, totalCount, totalPages, skip };
+  return {
+    projects,
+    total,
+    pageNumber,
+    totalPages: Math.ceil(total / pageSize),
+  };
 };
 
 export const getProjectByIdAndCommunityIdService = async (
@@ -123,8 +124,6 @@ export const getProjectByIdAndCommunityIdService = async (
       members: {
         select: {
           id: true,
-          role: true,
-          joinedAt: true,
           user: {
             select: {
               id: true,
@@ -138,12 +137,10 @@ export const getProjectByIdAndCommunityIdService = async (
   });
 
   if (!project) {
-    throw new NotFoundException(
-      'Project not found or does not belong to the specified community'
-    );
+    throw new Error('Project not found');
   }
 
-  return { project };
+  return project;
 };
 
 export const getProjectAnalyticsService = async (
@@ -155,42 +152,30 @@ export const getProjectAnalyticsService = async (
       id: projectId,
       communityId,
     },
+    include: {
+      members: {
+        select: {
+          id: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              profilePicture: true,
+            },
+          },
+        },
+      },
+    },
   });
 
   if (!project) {
-    throw new NotFoundException(
-      'Project not found or does not belong to this community'
-    );
+    throw new Error('Project not found');
   }
 
-  const currentDate = new Date();
-
-  const [totalTasks, overdueTasks, completedTasks] = await Promise.all([
-    prisma.task.count({
-      where: { projectId },
-    }),
-    prisma.task.count({
-      where: {
-        projectId,
-        dueDate: { lt: currentDate },
-        status: { not: TaskStatusEnum.DONE },
-      },
-    }),
-    prisma.task.count({
-      where: {
-        projectId,
-        status: TaskStatusEnum.DONE,
-      },
-    }),
-  ]);
-
-  const analytics = {
-    totalTasks,
-    overdueTasks,
-    completedTasks,
+  return {
+    totalMembers: project.members.length,
+    members: project.members,
   };
-
-  return { analytics };
 };
 
 export const joinProjectService = async (
@@ -198,9 +183,9 @@ export const joinProjectService = async (
   communityId: string,
   projectId: string
 ) => {
-  try {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     // Check if project exists and belongs to the community
-    const project = await prisma.project.findFirst({
+    const project = await tx.project.findFirst({
       where: {
         id: projectId,
         communityId,
@@ -208,13 +193,11 @@ export const joinProjectService = async (
     });
 
     if (!project) {
-      throw new NotFoundException(
-        'Project not found or does not belong to the specified community'
-      );
+      throw new Error('Project not found');
     }
 
     // Check if user is already a member
-    const existingMember = await prisma.projectMember.findUnique({
+    const existingMember = await tx.projectMember.findUnique({
       where: {
         projectId_userId: {
           projectId,
@@ -224,15 +207,14 @@ export const joinProjectService = async (
     });
 
     if (existingMember) {
-      throw new Error('You are already a member of this project');
+      throw new Error('Already a member of this project');
     }
 
     // Add user as project member
-    const member = await prisma.projectMember.create({
+    return tx.projectMember.create({
       data: {
         projectId,
         userId,
-        role: 'MEMBER',
       },
       include: {
         user: {
@@ -244,16 +226,7 @@ export const joinProjectService = async (
         },
       },
     });
-
-    return { member };
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === 'P2002') {
-        throw new Error('You are already a member of this project');
-      }
-    }
-    throw error;
-  }
+  });
 };
 
 export const leaveProjectService = async (
@@ -261,50 +234,45 @@ export const leaveProjectService = async (
   communityId: string,
   projectId: string
 ) => {
-  // Check if project exists and belongs to the community
-  const project = await prisma.project.findFirst({
-    where: {
-      id: projectId,
-      communityId,
-    },
-    include: {
-      members: {
-        where: {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Check if project exists and belongs to the community
+    const project = await tx.project.findFirst({
+      where: {
+        id: projectId,
+        communityId,
+      },
+    });
+
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    // Check if user is a member
+    const member = await tx.projectMember.findUnique({
+      where: {
+        projectId_userId: {
+          projectId,
           userId,
         },
       },
-    },
-  });
+    });
 
-  if (!project) {
-    throw new NotFoundException(
-      'Project not found or does not belong to the specified community'
-    );
-  }
+    if (!member) {
+      throw new Error('Not a member of this project');
+    }
 
-  // Check if user is a member
-  if (project.members.length === 0) {
-    throw new Error('You are not a member of this project');
-  }
-
-  // Check if user is the project creator
-  if (project.createdById === userId) {
-    throw new UnauthorizedException(
-      'Project creator cannot leave the project. Transfer ownership or delete the project instead.'
-    );
-  }
-
-  // Remove user from project
-  await prisma.projectMember.delete({
-    where: {
-      projectId_userId: {
-        projectId,
-        userId,
+    // Remove user from project
+    await tx.projectMember.delete({
+      where: {
+        projectId_userId: {
+          projectId,
+          userId,
+        },
       },
-    },
-  });
+    });
 
-  return { success: true };
+    return { message: 'Successfully left the project' };
+  });
 };
 
 export const getProjectMembersService = async (
@@ -315,25 +283,28 @@ export const getProjectMembersService = async (
 ) => {
   const skip = (pageNumber - 1) * pageSize;
 
-  const [totalCount, members] = await Promise.all([
+  // First check if project exists and belongs to the community
+  const project = await prisma.project.findFirst({
+    where: {
+      id: projectId,
+      communityId,
+    },
+  });
+
+  if (!project) {
+    throw new Error('Project not found');
+  }
+
+  const [total, members] = await Promise.all([
     prisma.projectMember.count({
-      where: {
-        project: {
-          id: projectId,
-          communityId,
-        },
-      },
+      where: { projectId },
     }),
     prisma.projectMember.findMany({
-      where: {
-        project: {
-          id: projectId,
-          communityId,
-        },
-      },
+      where: { projectId },
       skip,
       take: pageSize,
-      include: {
+      select: {
+        id: true,
         user: {
           select: {
             id: true,
@@ -342,58 +313,51 @@ export const getProjectMembersService = async (
           },
         },
       },
-      orderBy: { joinedAt: 'desc' },
+      orderBy: {
+        joinedAt: 'desc',
+      },
     }),
   ]);
 
-  const totalPages = Math.ceil(totalCount / pageSize);
-
-  return { members, totalCount, totalPages, skip };
+  return {
+    members,
+    total,
+    pageNumber,
+    totalPages: Math.ceil(total / pageSize),
+  };
 };
 
 export const updateProjectService = async (
   communityId: string,
   projectId: string,
   userId: string,
-  body: {
-    emoji?: string;
-    name: string;
+  data: {
+    name?: string;
     description?: string;
   }
 ) => {
-  try {
-    // Check if user has permission to update (must be project leader or creator)
-    const member = await prisma.projectMember.findFirst({
-      where: {
-        projectId,
-        userId,
-        OR: [
-          { role: 'LEADER' },
-          {
-            project: {
-              createdById: userId,
-            },
-          },
-        ],
-      },
-    });
-
-    if (!member) {
-      throw new UnauthorizedException(
-        'You do not have permission to update this project'
-      );
-    }
-
-    const project = await prisma.project.update({
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Check if project exists and belongs to the community
+    const project = await tx.project.findFirst({
       where: {
         id: projectId,
         communityId,
       },
-      data: {
-        name: body.name,
-        emoji: body.emoji,
-        description: body.description,
-      },
+    });
+
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    // Check if user is the project creator
+    if (project.createdById !== userId) {
+      throw new Error('Only project creator can update project details');
+    }
+
+    // Update project
+    return tx.project.update({
+      where: { id: projectId },
+      data,
       include: {
         createdBy: {
           select: {
@@ -405,7 +369,6 @@ export const updateProjectService = async (
         members: {
           select: {
             id: true,
-            role: true,
             user: {
               select: {
                 id: true,
@@ -417,21 +380,7 @@ export const updateProjectService = async (
         },
       },
     });
-
-    return { project };
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === 'P2025') {
-        throw new NotFoundException(
-          'Project not found or does not belong to the specified community'
-        );
-      }
-      if (error.code === 'P2002') {
-        throw new Error('A project with this name already exists in this community');
-      }
-    }
-    throw error;
-  }
+  });
 };
 
 export const deleteProjectService = async (
@@ -439,59 +388,29 @@ export const deleteProjectService = async (
   projectId: string,
   userId: string
 ) => {
-  try {
-    // Check if user has permission to delete (must be project leader or creator)
-    const member = await prisma.projectMember.findFirst({
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Check if project exists and belongs to the community
+    const project = await tx.project.findFirst({
       where: {
-        projectId,
-        userId,
-        OR: [
-          { role: 'LEADER' },
-          {
-            project: {
-              createdById: userId,
-            },
-          },
-        ],
+        id: projectId,
+        communityId,
       },
     });
 
-    if (!member) {
-      throw new UnauthorizedException(
-        'You do not have permission to delete this project'
-      );
+    if (!project) {
+      throw new Error('Project not found');
     }
 
-    // Using transaction to ensure atomicity
-    await prisma.$transaction(async (tx: any) => {
-      // Delete all tasks associated with the project
-      await tx.task.deleteMany({
-        where: { projectId },
-      });
+    // Check if user is the project creator
+    if (project.createdById !== userId) {
+      throw new Error('Only project creator can delete the project');
+    }
 
-      // Delete all project members
-      await tx.projectMember.deleteMany({
-        where: { projectId },
-      });
-
-      // Delete the project
-      await tx.project.delete({
-        where: {
-          id: projectId,
-          communityId,
-        },
-      });
+    // Delete project
+    await tx.project.delete({
+      where: { id: projectId },
     });
 
-    return { success: true };
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === 'P2025') {
-        throw new NotFoundException(
-          'Project not found or does not belong to the specified community'
-        );
-      }
-    }
-    throw error;
-  }
+    return { message: 'Project deleted successfully' };
+  });
 };

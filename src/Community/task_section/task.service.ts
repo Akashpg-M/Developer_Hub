@@ -12,7 +12,6 @@ const prisma = new PrismaClient();
 
 export const createTaskService = async (
   communityId: string,
-  projectId: string,
   userId: string,
   body: {
     title: string;
@@ -21,40 +20,42 @@ export const createTaskService = async (
     status?: TaskStatus;
     assignedTo?: string | null;
     dueDate?: Date;
+    projectId?: string | null;
   }
 ) => {
   try {
-    const { title, description, priority, status, assignedTo, dueDate } = body;
+    const { title, description, priority, status, assignedTo, dueDate, projectId } = body;
 
-    const project = await prisma.project.findFirst({
-      where: {
-        id: projectId,
-        communityId,
-      },
-    });
-
-    if (!project) {
-      throw new NotFoundError("Project not found or does not belong to this community");
-    }
-
-    if (assignedTo) {
-      const isAssignedUserMember = await prisma.projectMember.findFirst({
+    // If projectId is provided, verify it belongs to the community
+    if (projectId) {
+      const project = await prisma.project.findFirst({
         where: {
-          userId: assignedTo,
-          projectId,
+          id: projectId,
+          communityId,
         },
       });
 
-      if (!isAssignedUserMember) {
-        throw new NotFoundError("Assigned user is not a member of this project");
+      if (!project) {
+        throw new NotFoundError("Project not found or does not belong to this community");
+      }
+
+      // If assigning to someone, verify they are a community member
+      if (assignedTo) {
+        const isAssignedUserMember = await prisma.communityMember.findFirst({
+          where: {
+            userId: assignedTo,
+            communityId,
+          },
+        });
+
+        if (!isAssignedUserMember) {
+          throw new NotFoundError("Assigned user is not a member of this community");
+        }
       }
     }
 
-    const taskCode = `TASK-${Date.now()}`;
-
     const task = await prisma.task.create({
       data: {
-        taskCode,
         title,
         description,
         priority: priority || TaskPriority.MEDIUM,
@@ -80,6 +81,13 @@ export const createTaskService = async (
             profilePicture: true,
           },
         },
+        project: projectId ? {
+          select: {
+            id: true,
+            name: true,
+            emoji: true,
+          },
+        } : undefined,
       },
     });
 
@@ -94,7 +102,6 @@ export const createTaskService = async (
 
 export const updateTaskService = async (
   communityId: string,
-  projectId: string,
   taskId: string,
   body: {
     title?: string;
@@ -103,41 +110,46 @@ export const updateTaskService = async (
     status?: TaskStatus;
     assignedTo?: string | null;
     dueDate?: Date;
+    projectId?: string;
   }
 ) => {
   try {
-    const project = await prisma.project.findFirst({
+    const task = await prisma.task.findFirst({
       where: {
-        id: projectId,
+        id: taskId,
         communityId,
       },
     });
 
-    if (!project) {
-      throw new NotFoundError("Project not found or does not belong to this community");
-    }
-
-    const task = await prisma.task.findFirst({
-      where: {
-        id: taskId,
-        projectId,
-      },
-    });
-
     if (!task) {
-      throw new NotFoundError("Task not found or does not belong to this project");
+      throw new NotFoundError("Task not found or does not belong to this community");
     }
 
+    // If projectId is being updated, verify it belongs to the community
+    if (body.projectId) {
+      const project = await prisma.project.findFirst({
+        where: {
+          id: body.projectId,
+          communityId,
+        },
+      });
+
+      if (!project) {
+        throw new NotFoundError("Project not found or does not belong to this community");
+      }
+    }
+
+    // If assigning to someone, verify they are a community member
     if (body.assignedTo) {
-      const isAssignedUserMember = await prisma.projectMember.findFirst({
+      const isAssignedUserMember = await prisma.communityMember.findFirst({
         where: {
           userId: body.assignedTo,
-          projectId,
+          communityId,
         },
       });
 
       if (!isAssignedUserMember) {
-        throw new NotFoundError("Assigned user is not a member of this project");
+        throw new NotFoundError("Assigned user is not a member of this community");
       }
     }
 
@@ -149,7 +161,8 @@ export const updateTaskService = async (
         priority: body.priority,
         status: body.status,
         assignedToId: body.assignedTo,
-        dueDate: body.dueDate
+        dueDate: body.dueDate,
+        projectId: body.projectId,
       },
       include: {
         createdBy: {
@@ -164,6 +177,13 @@ export const updateTaskService = async (
             id: true,
             name: true,
             profilePicture: true,
+          },
+        },
+        project: {
+          select: {
+            id: true,
+            name: true,
+            emoji: true,
           },
         },
       },
@@ -202,15 +222,15 @@ export const getAllTasksService = async (
       where.projectId = filters.projectId;
     }
 
-    if (filters.status?.length) {
+    if (filters.status && filters.status.length > 0) {
       where.status = { in: filters.status };
     }
 
-    if (filters.priority?.length) {
+    if (filters.priority && filters.priority.length > 0) {
       where.priority = { in: filters.priority };
     }
 
-    if (filters.assignedTo?.length) {
+    if (filters.assignedTo && filters.assignedTo.length > 0) {
       where.assignedToId = { in: filters.assignedTo };
     }
 
@@ -225,16 +245,20 @@ export const getAllTasksService = async (
       where.dueDate = filters.dueDate;
     }
 
-    const { pageSize, pageNumber } = pagination;
-    const skip = (pageNumber - 1) * pageSize;
-
-    const [tasks, totalCount] = await Promise.all([
+    const [total, tasks] = await Promise.all([
+      prisma.task.count({ where }),
       prisma.task.findMany({
         where,
-        skip,
-        take: pageSize,
-        orderBy: { createdAt: 'desc' },
+        skip: (pagination.pageNumber - 1) * pagination.pageSize,
+        take: pagination.pageSize,
         include: {
+          createdBy: {
+            select: {
+              id: true,
+              name: true,
+              profilePicture: true,
+            },
+          },
           assignedTo: {
             select: {
               id: true,
@@ -250,21 +274,17 @@ export const getAllTasksService = async (
             },
           },
         },
+        orderBy: {
+          createdAt: 'desc',
+        },
       }),
-      prisma.task.count({ where }),
     ]);
-
-    const totalPages = Math.ceil(totalCount / pageSize);
 
     return {
       tasks,
-      pagination: {
-        pageSize,
-        pageNumber,
-        totalCount,
-        totalPages,
-        skip,
-      },
+      total,
+      pageNumber: pagination.pageNumber,
+      totalPages: Math.ceil(total / pagination.pageSize),
     };
   } catch (error) {
     throw new Error('Failed to fetch tasks');
@@ -273,26 +293,13 @@ export const getAllTasksService = async (
 
 export const getTaskByIdService = async (
   communityId: string,
-  projectId: string,
   taskId: string
 ) => {
   try {
-    const project = await prisma.project.findFirst({
-      where: {
-        id: projectId,
-        communityId,
-      },
-    });
-
-    if (!project) {
-      throw new NotFoundError("Project not found or does not belong to this community");
-    }
-
     const task = await prisma.task.findFirst({
       where: {
         id: taskId,
         communityId,
-        projectId,
       },
       include: {
         createdBy: {
@@ -320,7 +327,7 @@ export const getTaskByIdService = async (
     });
 
     if (!task) {
-      throw new NotFoundError("Task not found");
+      throw new NotFoundError("Task not found or does not belong to this community");
     }
 
     return task;

@@ -7,30 +7,32 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("POSTGRES_URL")
+  url      = env("DATABASE_URL")
 }
 
 // User Profile Section - Keep it simple and focused
 model User {
-  id              String    @id @default(cuid())
+  id              String        @id @default(uuid())
   name            String
-  email           String    @unique
-  password        String?     // Optional for OAuth users
-  provider        AuthProvider
-  isEmailVerified Boolean   @default(false)
-  role            String    @default("USER")
+  email           String        @unique
+  password        String?       // Optional for OAuth users
+  provider        AuthProvider  @default(LOCAL)
+  isEmailVerified Boolean     @default(false)
+  role            UserRole      @default(USER)
   profilePicture  String?
   bio             String?
   githubProfile   String?
   linkedinProfile String?
   website         String?
   refreshToken    String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  communityMembers CommunityMember[] @relation("UserCommunities")
+  projectMembers  ProjectMember[]
+  communityInvites CommunityInvite[] @relation("UserInvites")
 
   // Community Relations
   createdCommunities Community[] @relation("CreatedCommunities")
-  communityMembers CommunityMember[]
   taskChanges     TaskChange[]
   startedCalls VideoCall[] @relation("StartedCalls")
   taskStatusHistories TaskStatusHistory[]
@@ -42,30 +44,32 @@ model User {
   createdTasks    Task[]    @relation("CreatedTasks")
 
   projects        Project[] @relation("UserProjects")
-  projectMembers  ProjectMember[]
-  communityInvites CommunityInvite[] @relation("UserInvites")
 
   @@map("users")
 }
 
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
 
 enum TaskStatus {
   TODO
-  ASSIGNED
   IN_PROGRESS
   REVIEW
   DONE
 }
 
 model Community {
-  id            String    @id @default(cuid())
+  id            String        @id @default(uuid())
   name          String
   description   String?
-  isPrivate     Boolean   @default(false)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  isPrivate     Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
   createdBy     String
-  creator       User      @relation("CreatedCommunities", fields: [createdBy], references: [id])
+  creator       User          @relation("CreatedCommunities", fields: [createdBy], references: [id])
   communityMembers CommunityMember[]
   chats         Chat[]
   videoCalls    VideoCall[]
@@ -88,28 +92,29 @@ enum CommunityRole {
 }
 
 model CommunityMember {
-  id          String        @id @default(cuid())
+  id          String        @id @default(uuid())
   communityId String
   userId      String
   role        CommunityRole @default(VIEWER)
   joinedAt    DateTime      @default(now())
   community   Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
-  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User          @relation("UserCommunities", fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([communityId, userId])
 }
 
 model CommunityInvite {
-  id          String   @id @default(cuid())
+  id          String        @id @default(uuid())
   communityId String
-  code        String   @unique
-  expiresAt   DateTime
-  createdAt   DateTime @default(now())
-  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
-  user        User     @relation("UserInvites", fields: [userId], references: [id])
   userId      String
+  code        String        @unique
+  expiresAt   DateTime
+  createdAt   DateTime      @default(now())
+  community   Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  user        User          @relation("UserInvites", fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([communityId, code])
+  @@index([communityId])
+  @@index([userId])
 }
 
 // Internal Mail System (for community invitations and notifications)
@@ -119,19 +124,19 @@ enum ChatType {
 }
 
 model Message {
-  id          String   @id @default(cuid())
+  id          String        @id @default(uuid())
   text        String?
   image       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
   senderId    String
   receiverId  String?
   communityId String?
   chatType    ChatType
-  sender      User       @relation("SentMessages", fields: [senderId], references: [id])
-  receiver    User?      @relation("ReceivedMessages", fields: [receiverId], references: [id])
-  community   Community? @relation(fields: [communityId], references: [id])
-  chat        Chat?      @relation(fields: [chatId], references: [id])
+  sender      User          @relation("SentMessages", fields: [senderId], references: [id])
+  receiver    User?         @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  community   Community?    @relation(fields: [communityId], references: [id])
+  chat        Chat?         @relation(fields: [chatId], references: [id])
   chatId      String?
 
   @@index([communityId])
@@ -140,21 +145,23 @@ model Message {
 
 // Community Chat System
 model Chat {
-  id            String    @id @default(cuid())
+  id            String        @id @default(uuid())
   communityId   String
-  community     Community @relation(fields: [communityId], references: [id])
+  community     Community     @relation(fields: [communityId], references: [id])
   messages      Message[]
 
   @@index([communityId])
 }
 
 model TaskChange {
-  id        String   @id @default(cuid())
-  change    String
-  createdAt DateTime @default(now())
+  id        String        @id @default(uuid())
   taskId    String
+  field     String
+  oldValue  String?
+  newValue  String?
   changedBy String
-  user      User     @relation(fields: [changedBy], references: [id])
+  changedAt DateTime       @default(now())
+  user      User          @relation(fields: [changedBy], references: [id])
 
   @@index([taskId])
   @@index([changedBy])
@@ -163,14 +170,14 @@ model TaskChange {
 
 // Track task status changes
 model TaskStatusHistory {
-  id        String   @id @default(cuid())
+  id        String        @id @default(uuid())
   taskId    String
   oldStatus TaskStatus
   newStatus TaskStatus
   changedBy String
-  changedAt DateTime   @default(now())
+  changedAt DateTime         @default(now())
 
-  user      User       @relation(fields: [changedBy], references: [id])
+  user      User            @relation(fields: [changedBy], references: [id])
 
   @@index([taskId])
   @@index([changedBy])
@@ -178,15 +185,15 @@ model TaskStatusHistory {
 
 // Community Video Call
 model VideoCall {
-  id            String    @id @default(cuid())
+  id            String        @id @default(uuid())
   communityId   String
   startedBy     String
-  startedAt     DateTime  @default(now())
+  startedAt     DateTime      @default(now())
   endedAt       DateTime?
-  isActive      Boolean   @default(true)
+  isActive      Boolean         @default(true)
 
-  community     Community @relation(fields: [communityId], references: [id])
-  starter       User      @relation("StartedCalls", fields: [startedBy], references: [id])
+  community     Community       @relation(fields: [communityId], references: [id])
+  starter       User            @relation("StartedCalls", fields: [startedBy], references: [id])
 
   @@index([communityId])
   @@index([startedBy])
@@ -199,18 +206,18 @@ enum AuthProvider {
 }
 
 model Project {
-  id          String    @id @default(cuid())
-  name        String
-  description String?
-  emoji       String    @default("📊")
-  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
-  communityId String
-  createdBy   User      @relation("UserProjects", fields: [createdById], references: [id])
-  createdById String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  tasks       Task[]
-  members     ProjectMember[]
+  id            String        @id @default(uuid())
+  name          String
+  description   String?
+  emoji         String?       @default("📊")
+  communityId   String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  community     Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  createdBy     User          @relation("UserProjects", fields: [createdById], references: [id])
+  createdById   String
+  tasks         Task[]
+  members       ProjectMember[]
 
   @@index([communityId])
   @@index([createdById])
@@ -218,13 +225,12 @@ model Project {
 }
 
 model ProjectMember {
-  id        String   @id @default(cuid())
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectId String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    String
-  role      String   @default("MEMBER")
-  joinedAt  DateTime @default(now())
+  id            String        @id @default(uuid())
+  projectId     String
+  userId        String
+  joinedAt      DateTime        @default(now())
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, userId])
   @@index([projectId])
@@ -239,25 +245,22 @@ enum TaskPriority {
 }
 
 model Task {
-  id          String    @id @default(cuid())
-  taskCode    String    @unique
+  id          String       @id @default(uuid())
   title       String
   description String?
-  status      TaskStatus @default(TODO)
   priority    TaskPriority @default(MEDIUM)
-  dueDate     DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  // Relations
-  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectId   String
-  community   Community @relation("CommunityTasks", fields: [communityId], references: [id], onDelete: Cascade)
+  status      TaskStatus   @default(TODO)
+  projectId   String?
   communityId String
-  assignedTo  User?     @relation("AssignedTasks", fields: [assignedToId], references: [id])
   assignedToId String?
-  createdBy   User      @relation("CreatedTasks", fields: [createdById], references: [id])
   createdById String
+  dueDate     DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  project     Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  community   Community    @relation("CommunityTasks", fields: [communityId], references: [id], onDelete: Cascade)
+  assignedTo  User?        @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  createdBy   User         @relation("CreatedTasks", fields: [createdById], references: [id])
 
   @@index([projectId])
   @@index([communityId])

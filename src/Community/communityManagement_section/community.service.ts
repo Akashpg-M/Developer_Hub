@@ -1,5 +1,5 @@
 import { PrismaClient, Community, CommunityRole, Prisma } from '@prisma/client';
-import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 
 interface CreateCommunityInput {
   name: string;
@@ -14,13 +14,12 @@ interface GetCommunitiesInput {
   search?: string;
 }
 
-interface GetMembersInput {
-  page: number;
-  limit: number;
-}
-
 export class CommunityService {
-  constructor(private prisma: PrismaClient) {}
+  private prisma: PrismaClient;
+
+  constructor(prisma: PrismaClient) {
+    this.prisma = prisma;
+  }
 
   async createCommunity(input: CreateCommunityInput): Promise<Community> {
     return this.prisma.$transaction(async (tx) => {
@@ -33,7 +32,7 @@ export class CommunityService {
           communityMembers: {
             create: {
               userId: input.creatorId,
-              role: 'ADMIN',
+              role: 'OWNER',
             },
           },
         },
@@ -140,17 +139,13 @@ export class CommunityService {
 
   async deleteCommunity(id: string) {
     try {
-      // First delete all related records
       await this.prisma.$transaction([
-        // Delete community members
         this.prisma.communityMember.deleteMany({
           where: { communityId: id }
         }),
-        // Delete community invites
         this.prisma.communityInvite.deleteMany({
           where: { communityId: id }
         }),
-        // Finally delete the community
         this.prisma.community.delete({
           where: { id }
         })
@@ -206,7 +201,6 @@ export class CommunityService {
         throw new Error('Not a member of this community');
       }
 
-      // If user is admin, check if they're the last admin
       if (member.role === 'ADMIN') {
         const adminCount = await this.prisma.communityMember.count({
           where: {
@@ -220,7 +214,6 @@ export class CommunityService {
         }
       }
 
-      // Delete the member
       await this.prisma.communityMember.delete({
         where: {
           communityId_userId: {
@@ -230,19 +223,15 @@ export class CommunityService {
         },
       });
 
-      // Check if this was the last member
       const remainingMembers = await this.prisma.communityMember.count({
         where: { communityId }
       });
 
-      // If no members left, delete the community
       if (remainingMembers === 0) {
         await this.prisma.$transaction([
-          // Delete community invites
           this.prisma.communityInvite.deleteMany({
             where: { communityId }
           }),
-          // Delete the community
           this.prisma.community.delete({
             where: { id: communityId }
           })
@@ -272,10 +261,9 @@ export class CommunityService {
       });
 
       if (!member) {
-        throw new Error('Member not found');
+        throw new Error('User is not a member of this community');
       }
 
-      // If changing from ADMIN, ensure there's at least one other admin
       if (member.role === 'ADMIN' && role !== 'ADMIN') {
         const adminCount = await tx.communityMember.count({
           where: {
@@ -285,18 +273,20 @@ export class CommunityService {
         });
 
         if (adminCount <= 1) {
-          throw new Error('Cannot change role of the last admin');
+          throw new Error('Cannot demote the last admin. Please assign another admin first.');
         }
       }
 
-      return tx.communityMember.update({
+      const updatedMember = await tx.communityMember.update({
         where: {
           communityId_userId: {
             communityId,
             userId,
           },
         },
-        data: { role },
+        data: {
+          role,
+        },
         include: {
           user: {
             select: {
@@ -308,41 +298,12 @@ export class CommunityService {
           },
         },
       });
+
+      return updatedMember;
     });
   }
 
-  async getCommunityMembers(communityId: string, { page, limit }: GetMembersInput) {
-    const skip = (page - 1) * limit;
-
-    const [members, total] = await Promise.all([
-      this.prisma.communityMember.findMany({
-        where: { communityId },
-        skip,
-        take: limit,
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              profilePicture: true,
-            },
-          },
-        },
-        orderBy: { role: 'asc' },
-      }),
-      this.prisma.communityMember.count({ where: { communityId } }),
-    ]);
-
-    return {
-      members,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit),
-    };
-  }
-
-  async isUserAdmin(communityId: string, userId: string): Promise<boolean> {
+  async isUserAdmin(communityId: string, userId: string) {
     const member = await this.prisma.communityMember.findUnique({
       where: {
         communityId_userId: {
@@ -352,54 +313,23 @@ export class CommunityService {
       },
     });
 
-    return member?.role === 'ADMIN';
+    return member?.role === 'ADMIN' || member?.role === 'OWNER';
   }
 
-  async canInviteMembers(communityId: string, userId: string): Promise<boolean> {
-    const member = await this.prisma.communityMember.findUnique({
-      where: {
-        communityId_userId: {
-          communityId,
-          userId,
-        },
-      },
-    });
-
-    return member?.role === 'ADMIN' || member?.role === 'MANAGER';
-  }
-
-  async generateInviteLink(communityId: string): Promise<string> {
-    const code = uuidv4();
+  async generateInviteLink(communityId: string, userId: string): Promise<string> {
+    const code = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // Expires in 7 days
+    expiresAt.setDate(expiresAt.getDate() + 7); // Link expires in 7 days
 
     await this.prisma.communityInvite.create({
       data: {
-        communityId,
         code,
+        communityId,
+        userId,
         expiresAt,
       },
     });
 
-    return `${process.env.FRONTEND_URL}/join/${code}`;
+    return `${process.env.FRONTEND_URL}/join-community/${code}`;
   }
-
-  async validateInviteCode(code: string): Promise<{ communityId: string; isValid: boolean }> {
-    const invite = await this.prisma.communityInvite.findUnique({
-      where: { code },
-    });
-
-    if (!invite) {
-      return { communityId: '', isValid: false };
-    }
-
-    if (invite.expiresAt < new Date()) {
-      await this.prisma.communityInvite.delete({
-        where: { code },
-      });
-      return { communityId: '', isValid: false };
-    }
-
-    return { communityId: invite.communityId, isValid: true };
-  }
-} 
+}
