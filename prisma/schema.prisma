@@ -1,0 +1,266 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("POSTGRES_URL")
+}
+
+// User Profile Section - Keep it simple and focused
+model User {
+  id              String    @id @default(cuid())
+  name            String
+  email           String    @unique
+  password        String?     // Optional for OAuth users
+  provider        AuthProvider
+  isEmailVerified Boolean   @default(false)
+  role            String    @default("USER")
+  profilePicture  String?
+  bio             String?
+  githubProfile   String?
+  linkedinProfile String?
+  website         String?
+  refreshToken    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Community Relations
+  createdCommunities Community[] @relation("CreatedCommunities")
+  communityMembers CommunityMember[]
+  taskChanges     TaskChange[]
+  startedCalls VideoCall[] @relation("StartedCalls")
+  taskStatusHistories TaskStatusHistory[]
+  sentMessages     Message[] @relation("SentMessages")
+  receivedMessages Message[] @relation("ReceivedMessages")
+
+  // Task Relations
+  assignedTasks   Task[]    @relation("AssignedTasks")
+  createdTasks    Task[]    @relation("CreatedTasks")
+
+  projects        Project[] @relation("UserProjects")
+  projectMembers  ProjectMember[]
+  communityInvites CommunityInvite[] @relation("UserInvites")
+
+  @@map("users")
+}
+
+
+enum TaskStatus {
+  TODO
+  ASSIGNED
+  IN_PROGRESS
+  REVIEW
+  DONE
+}
+
+model Community {
+  id            String    @id @default(cuid())
+  name          String
+  description   String?
+  isPrivate     Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  createdBy     String
+  creator       User      @relation("CreatedCommunities", fields: [createdBy], references: [id])
+  communityMembers CommunityMember[]
+  chats         Chat[]
+  videoCalls    VideoCall[]
+  messages      Message[]
+  invites       CommunityInvite[]
+  projects      Project[]
+  tasks         Task[]    @relation("CommunityTasks")
+
+  @@index([createdBy])
+}
+
+enum CommunityRole {
+  OWNER
+  ADMIN
+  MANAGER
+  DEVELOPER_I
+  DEVELOPER_II
+  DEVELOPER_III
+  VIEWER
+}
+
+model CommunityMember {
+  id          String        @id @default(cuid())
+  communityId String
+  userId      String
+  role        CommunityRole @default(VIEWER)
+  joinedAt    DateTime      @default(now())
+  community   Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([communityId, userId])
+}
+
+model CommunityInvite {
+  id          String   @id @default(cuid())
+  communityId String
+  code        String   @unique
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  user        User     @relation("UserInvites", fields: [userId], references: [id])
+  userId      String
+
+  @@unique([communityId, code])
+}
+
+// Internal Mail System (for community invitations and notifications)
+enum ChatType {
+  PRIVATE
+  GROUP
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  text        String?
+  image       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  senderId    String
+  receiverId  String?
+  communityId String?
+  chatType    ChatType
+  sender      User       @relation("SentMessages", fields: [senderId], references: [id])
+  receiver    User?      @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  community   Community? @relation(fields: [communityId], references: [id])
+  chat        Chat?      @relation(fields: [chatId], references: [id])
+  chatId      String?
+
+  @@index([communityId])
+}
+
+
+// Community Chat System
+model Chat {
+  id            String    @id @default(cuid())
+  communityId   String
+  community     Community @relation(fields: [communityId], references: [id])
+  messages      Message[]
+
+  @@index([communityId])
+}
+
+model TaskChange {
+  id        String   @id @default(cuid())
+  change    String
+  createdAt DateTime @default(now())
+  taskId    String
+  changedBy String
+  user      User     @relation(fields: [changedBy], references: [id])
+
+  @@index([taskId])
+  @@index([changedBy])
+}
+
+
+// Track task status changes
+model TaskStatusHistory {
+  id        String   @id @default(cuid())
+  taskId    String
+  oldStatus TaskStatus
+  newStatus TaskStatus
+  changedBy String
+  changedAt DateTime   @default(now())
+
+  user      User       @relation(fields: [changedBy], references: [id])
+
+  @@index([taskId])
+  @@index([changedBy])
+}
+
+// Community Video Call
+model VideoCall {
+  id            String    @id @default(cuid())
+  communityId   String
+  startedBy     String
+  startedAt     DateTime  @default(now())
+  endedAt       DateTime?
+  isActive      Boolean   @default(true)
+
+  community     Community @relation(fields: [communityId], references: [id])
+  starter       User      @relation("StartedCalls", fields: [startedBy], references: [id])
+
+  @@index([communityId])
+  @@index([startedBy])
+}
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+  GITHUB
+}
+
+model Project {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  emoji       String    @default("📊")
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  communityId String
+  createdBy   User      @relation("UserProjects", fields: [createdById], references: [id])
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  tasks       Task[]
+  members     ProjectMember[]
+
+  @@index([communityId])
+  @@index([createdById])
+  @@unique([name, communityId])
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  role      String   @default("MEMBER")
+  joinedAt  DateTime @default(now())
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  taskCode    String    @unique
+  title       String
+  description String?
+  status      TaskStatus @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+  dueDate     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId   String
+  community   Community @relation("CommunityTasks", fields: [communityId], references: [id], onDelete: Cascade)
+  communityId String
+  assignedTo  User?     @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  assignedToId String?
+  createdBy   User      @relation("CreatedTasks", fields: [createdById], references: [id])
+  createdById String
+
+  @@index([projectId])
+  @@index([communityId])
+  @@index([assignedToId])
+  @@index([createdById])
+}
