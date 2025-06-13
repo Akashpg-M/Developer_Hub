@@ -1,0 +1,140 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum Provider {
+  EMAIL
+  GOOGLE
+}
+
+model User {
+  id              String    @id @default(uuid())
+  name            String?
+  email           String    @unique
+  password        String?
+  profilePicture  String?
+  isActive        Boolean   @default(true)
+  lastLogin       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  currentCommunity String?   @db.VarChar(36)
+  communities      Community[] @relation("CommunityOwner")
+  projects        Project[]   @relation("ProjectCreator")
+  tasksCreated    Task[]      @relation("TaskCreator")
+  tasksAssigned   Task[]      @relation("TaskAssignee")
+  members         Member[]
+  accounts        Account[]
+
+  @@map("users")
+}
+
+model Community {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  ownerId     String
+  owner       User      @relation("CommunityOwner", fields: [ownerId], references: [id])
+  inviteCode  String    @unique
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  members     Member[]
+  projects    Project[]
+  tasks       Task[]
+
+  @@map("communities")
+}
+
+model Member {
+  id          String    @id @default(uuid())
+  userId      String
+  communityId String
+  roleId      String
+  joinedAt    DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id])
+  community   Community @relation(fields: [communityId], references: [id])
+  role        Role      @relation(fields: [roleId], references: [id])
+
+  @@map("members")
+}
+
+model Role {
+  id          String    @id @default(uuid())
+  name        String
+  permissions Json // Store permissions as JSON since the RoleDocument is not fully defined
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  members     Member[]
+
+  @@map("roles")
+}
+
+model Project {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  emoji       String    @default("📊")
+  communityId String
+  createdById String
+  community   Community @relation(fields: [communityId], references: [id])
+  createdBy   User      @relation("ProjectCreator", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  tasks       Task[]
+
+  @@map("projects")
+}
+
+model Task {
+  id          String       @id @default(uuid())
+  taskCode    String       @unique
+  title       String
+  description String?
+  projectId   String
+  communityId String
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+  assignedToId String?
+  createdById String
+  dueDate     DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  project     Project      @relation(fields: [projectId], references: [id])
+  community   Community    @relation(fields: [communityId], references: [id])
+  assignedTo  User?        @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  createdBy   User         @relation("TaskCreator", fields: [createdById], references: [id])
+
+  @@map("tasks")
+}
+
+model Account {
+  id          String    @id @default(uuid())
+  provider    Provider
+  providerId  String    @unique
+  userId      String
+  refreshToken String?
+  tokenExpiry DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@map("accounts")
+}
