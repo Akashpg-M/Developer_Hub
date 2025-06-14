@@ -1,87 +1,77 @@
-import React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../features/auth/AuthContext';
+import React, { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { UserPlus, LogIn, LogOut } from "lucide-react";
+import { useUserStore } from "../store/useUserStore";
+import { toast } from "react-hot-toast";
 
-export const Navbar: React.FC = () => {
-  const { user, loading, logout } = useAuth();
+const Navbar: React.FC = () => {
   const navigate = useNavigate();
-
+  const { user, logout } = useUserStore();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  
   const handleLogout = async () => {
     try {
-      await logout();
-      setTimeout(() => navigate('/login'), 0);
+      setIsLoggingOut(true);
+      const success = await logout();
+      
+      if (success) {
+        // Navigate to home page after successful logout
+        navigate('/', { replace: true });
+        // Force a full page reload to ensure all state is cleared
+        window.location.href = '/';
+      }
     } catch (error) {
       console.error('Logout failed:', error);
+      toast.error('Failed to log out. Please try again.');
+    } finally {
+      setIsLoggingOut(false);
     }
   };
 
-  if (loading) {
-    return null; // or a loading spinner/navbar skeleton
-  }
-
   return (
-    <nav className="bg-white shadow">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16">
-          <div className="flex">
-            <div className="flex-shrink-0 flex items-center">
-              <Link to="/" className="text-xl font-bold text-indigo-600">
-                Developer Hub
-              </Link>
-            </div>
-            <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-              <Link
-                to="/"
-                className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-              >
-                Home
-              </Link>
-              <Link
-                to="/communities"
-                className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-              >
-                Browse New Communities
-              </Link>
-            </div>
-          </div>
-          <div className="hidden sm:ml-6 sm:flex sm:items-center">
+    <header className="bg-blue-600 text-white p-4 shadow-lg">
+      <div className="container mx-auto flex justify-between items-center">
+        <Link to="/" className="text-2xl font-bold">
+          DevHub
+        </Link>
 
-            {user ? (
-              <div className="ml-3 relative">
-                <div className="flex items-center space-x-4">
-                  <Link
-                    to="/profile"
-                    className="text-gray-500 hover:text-gray-700"
-                  >
-                    {user.name}
-                  </Link>
-                  <button
-                    onClick={handleLogout}
-                    className="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-indigo-700"
-                  >
-                    Logout
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center space-x-4">
-                <Link
-                  to="/login"
-                  className="text-gray-500 hover:text-gray-700"
-                >
-                  Login
-                </Link>
-                <Link
-                  to="/register"
-                  className="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-indigo-700"
-                >
-                  Register
-                </Link>
-              </div>
-            )}
-          </div>
-        </div>
+        <nav className="flex space-x-6 items-center">
+          <Link to="/" className="hover:text-gray-300">
+            Home
+          </Link>
+
+          {user ? (
+            <button
+              className={`flex items-center space-x-1 bg-red-500 px-3 py-2 rounded-lg hover:bg-red-600 ${isLoggingOut ? 'opacity-50 cursor-not-allowed' : ''}`}
+              onClick={handleLogout}
+              disabled={isLoggingOut}
+            >
+              <LogOut size={18} className={isLoggingOut ? 'animate-spin' : ''} />
+              <span>{isLoggingOut ? 'Logging out...' : 'Log Out'}</span>
+            </button>
+          ) : (
+            <>
+              <Link
+                to="/signup"
+                className="flex items-center space-x-1 bg-green-500 px-3 py-2 rounded-lg hover:bg-green-600"
+              >
+                <UserPlus size={18} />
+                Sign Up
+              </Link>
+              <Link
+                to="/login"
+                className="flex items-center space-x-1 bg-blue-500 px-3 py-2 rounded-lg hover:bg-blue-700"
+              >
+                <LogIn size={18} />
+                Login
+              </Link>
+            </>
+          )}
+        </nav>
       </div>
-    </nav>
+    </header>
   );
-}; 
+};
+
+export default Navbar;
+

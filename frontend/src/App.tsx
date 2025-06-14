@@ -1,109 +1,73 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './features/auth/AuthContext';
-import { Navbar } from './components/Navbar';
-import { Home } from './pages/Home';
-import { LoginForm } from './features/auth/components/LoginForm';
-import { RegisterForm } from './features/auth/components/RegisterForm';
-import { Profile } from './features/auth/components/Profile';
-import { useAuth } from './features/auth/AuthContext';
-import { CommunityList } from './features/community/components/CommunityList';
-import { CreateCommunity } from './features/community/components/CreateCommunity';
-import { CommunityDetail } from './features/community/components/CommunityDetail';
+// import "./index.css"
 
-// Protected Route component
-const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, loading } = useAuth();
+// import { Navigate, Route, Routes} from 'react-router-dom';
 
-  if (loading) {
-    return (
-      <div className="h-screen flex items-center justify-center">
-        <div className="text-lg font-semibold">Loading...</div>
-      </div>
-    );
-   }
+// import HomePage from './pages/Home';
+// import SignUpPage from './pages/Signup';
+// import LoginPage from './pages/Login';
 
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
 
-  return <>{children}</>;
-};
+// import Navbar from './components/Navbar.jsx';
+// import {Toaster} from "react-hot-toast";
+// import { useUserStore } from "./store/useUserStore";
+// import { useEffect } from "react";
+// // import { get } from 'express/lib/response.js';
 
-const AppRoutes: React.FC = () => {
-  return (
-    <Routes>
-      <Route path="/" element={<Home />} />
-      <Route path="/login" element={<LoginForm />} />
-      <Route path="/register" element={<RegisterForm />} />
-      <Route
-        path="/profile"
-        element={
-          <ProtectedRoute>
-            <Profile />
-          </ProtectedRoute>
-        }
-      />
-      {/* Community Routes */}
-      <Route
-        path="/communities"
-        element={
-          <ProtectedRoute>
-            <CommunityList />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/communities/create"
-        element={
-          <ProtectedRoute>
-            <CreateCommunity />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/communities/:communityId"
-        element={
-          <ProtectedRoute>
-            <CommunityDetail />
-          </ProtectedRoute>
-        }
-      />
-    </Routes>
-  );
-};
 
-const AppContent: React.FC = () => {
-  const { loading } = useAuth();
+// function App() {
+//   const { user,checkAuth ,checkingAuth} = useUserStore();
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-white">
-        <div className="text-lg font-semibold text-gray-700 animate-pulse">Loading...</div>
-      </div>
-    );
-  }
+//   useEffect(() => {
+//     checkAuth();
+//   }, [checkAuth]);  // to solve the issue of automatic switch to login page after login and switch to home page and when refres the page we are redirected to login page
+
+//   if(checkingAuth) return <h1>Loading...</h1>;
+
+//   return (
+//     <div>
+//       <Navbar/>
+//       <Routes>
+//         <Route path = '/' element={<HomePage/>}/>
+//         <Route path = '/signup' element = { !user ? <SignUpPage/> : <Navigate to ='/'/>}/>
+//         <Route path = '/login' element = { !user ? <LoginPage/> : <Navigate to='/'/>}/>
+//       <Toaster/>
+//     </div>
+//   );
+// }
+
+// export default App
+
+import "./index.css";
+
+import { Navigate, Route, Routes } from "react-router-dom";
+import HomePage from "./pages/Home";
+import SignUpPage from "./pages/Signup";
+import LoginPage from "./pages/Login";
+import Navbar from "./components/Navbar";
+import { Toaster } from "react-hot-toast";
+import { useUserStore } from "./store/useUserStore";
+import { useEffect } from "react";
+
+const App: React.FC = () => {
+  const { user, checkAuth, checkingAuth } = useUserStore();
+
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
+
+  if (checkingAuth) return <h1>Loading...</h1>;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div>
       <Navbar />
-      <main>
-        <AppRoutes />
-      </main>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/signup" element={!user ? <SignUpPage /> : <Navigate to="/" />} />
+        <Route path="/login" element={!user ? <LoginPage /> : <Navigate to="/" />} />
+      </Routes>
+      <Toaster />
     </div>
   );
 };
 
-
-const App: React.FC = () => {
-  return (
-    <AuthProvider>
-      <Router>
-        <AppContent/>
-      </Router>
-    </AuthProvider>
-  );
-};
-
 export default App;
-
