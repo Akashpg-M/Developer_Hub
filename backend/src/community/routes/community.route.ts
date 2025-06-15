@@ -1,12 +1,22 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { CommunityController } from '../communityManagement_section/community.controller';
+import { CommunityRole } from '@prisma/client';
+import { CommunityController } from '../controllers/community.controller';
 import { protectRoute } from '../../auth_app/middleware/auth.middleware';
 import { validateRequest } from '../../auth_app/middleware/validation.middleware';
-import { CommunityRole } from '@prisma/client';
+// import { authorizeRole } from '../middleware/authorization.middleware';
+
+// Create controller instance
+const communityController = new CommunityController();
 
 const router = express.Router();
-const communityController = new CommunityController();
+
+// Type for authenticated request handlers
+type AuthenticatedRequestHandler = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => Promise<void | Response>;
 
 // Validation schemas
 const createCommunitySchema = z.object({
@@ -26,153 +36,89 @@ const updateMemberRoleSchema = z.object({
   role: z.nativeEnum(CommunityRole),
 });
 
-// Community routes
-router.post('/', protectRoute, validateRequest(createCommunitySchema), communityController.createCommunity);
-router.get('/', communityController.getCommunities);
-router.get('/user', protectRoute, communityController.getUserCommunities);
-router.get('/:communityId', communityController.getCommunity);
-router.put('/:communityId', protectRoute, validateRequest(updateCommunitySchema), communityController.updateCommunity);
+// Helper to wrap controller methods with proper typing
+function createHandler(
+  handler: (req: Request, res: Response) => Promise<Response>
+): AuthenticatedRequestHandler {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await handler(req, res);
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+// Community CRUD routes
+router.get(
+  '/',
+  createHandler(communityController.getCommunities.bind(communityController))
+);
+
+router.get(
+  '/user/communities',
+  protectRoute,
+  createHandler(communityController.getUserCommunities.bind(communityController))
+);
+
+router.get(
+  '/user',
+  protectRoute,
+  createHandler(communityController.getUserCommunities.bind(communityController))
+);
+
+router.get(
+  '/:communityId',
+  createHandler(communityController.getCommunity.bind(communityController))
+);
+
+router.post(
+  '/',
+  protectRoute,
+  validateRequest(createCommunitySchema),
+  createHandler(communityController.createCommunity.bind(communityController))
+);
+
+router.patch(
+  '/:communityId',
+  protectRoute,
+  // authorizeRole([UserRole.ADMIN], [CommunityRole.OWNER, CommunityRole.ADMIN]),
+  validateRequest(updateCommunitySchema),
+  createHandler(communityController.updateCommunity.bind(communityController))
+);
+
+router.delete(
+  '/:communityId',
+  protectRoute,
+  // authorizeRole([UserRole.ADMIN], [CommunityRole.OWNER]),
+  createHandler(communityController.deleteCommunity.bind(communityController))
+);
 
 // Member management routes
-router.post('/:communityId/join', protectRoute, communityController.joinCommunity);
-router.delete('/:communityId/leave', protectRoute, communityController.leaveCommunity);
-router.put('/:communityId/members/role', protectRoute, validateRequest(updateMemberRoleSchema), communityController.updateMemberRole);
-router.get('/:communityId/members', communityController.getCommunityMembers);
-router.delete('/:communityId', protectRoute, communityController.deleteCommunity);
-
-// Invite management
-router.post('/:communityId/invite', protectRoute, communityController.generateInviteLink);
-
-
-
-//project routes
-
-import {
-  createProject,
-  getProjectsInCommunity,
-  getProjectByIdAndCommunityId,
-  getProjectAnalytics,
-  joinProject,
-  leaveProject,
-  getProjectMembers,
-  updateProject,
-  deleteProject
-} from '../projects_section/project.controller';
-
-
-// Validation schemas
-const createProjectSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  emoji: z.string().optional(),
-});
-
-const updateProjectSchema = createProjectSchema;
-
-// Project CRUD routes
-router.post('/:communityId/project', protectRoute, validateRequest(createProjectSchema), createProject);
-router.get('/:communityId/project', protectRoute, getProjectsInCommunity);
-router.get('/:communityId/project/:projectId', protectRoute, getProjectByIdAndCommunityId);
-router.get('/:communityId/project/:projectId/analytics', protectRoute, getProjectAnalytics);
-router.get('/:communityId/project/:projectId/members', protectRoute, getProjectMembers);
-
-// Project member management
-router.post('/:communityId/project/:projectId/join', protectRoute, joinProject);
-router.delete('/:communityId/project/:projectId/leave', protectRoute, leaveProject);
-
-// Project management
-router.put('/:communityId/project/:projectId', protectRoute, validateRequest(updateProjectSchema), updateProject);
-router.delete('/:communityId/project/:projectId', protectRoute, deleteProject);
-
-
-
-
-import {
-  createTaskController,
-  deleteTaskController,
-  getAllTasksController,
-  getTaskByIdController,
-  updateTaskController,
-  assignTask,
-  unassignTask,
-  updateTaskStatus
-} from '../task_section/task.controller';
-import { TaskStatus, TaskPriority } from '@prisma/client';
-
-
-const createTaskSchema = z.object({
-  title: z.string().min(1),
-  description: z.string().optional(),
-  priority: z.nativeEnum(TaskPriority).optional(),
-  status: z.nativeEnum(TaskStatus).optional(),
-  assignedTo: z.string().optional().nullable(),
-  dueDate: z.string().datetime().optional().transform((val) => val ? new Date(val) : undefined),
-  projectId: z.string().optional(), // Optional project reference
-});
-
-const updateTaskSchema = createTaskSchema.partial();
-
-const updateStatusSchema = z.object({
-  status: z.nativeEnum(TaskStatus),
-});
-
-const assignTaskSchema = z.object({
-  userId: z.string().min(1),
-});
-
-// Task CRUD routes
 router.post(
-  '/:communityId/task',
+  '/:communityId/join',
   protectRoute,
-  validateRequest(createTaskSchema),
-  createTaskController
+  createHandler(communityController.joinCommunity.bind(communityController))
 );
 
-router.get(
-  '/:communityId/task',
-  protectRoute,
-  getAllTasksController
-);
-
-router.get(
-  '/:communityId/task/:taskId',
-  protectRoute,
-  getTaskByIdController
-);
-
-router.put(
-  '/:communityId/task/:taskId',
-  protectRoute,
-  validateRequest(updateTaskSchema),
-  updateTaskController
-);
-
-router.delete(
-  '/:communityId/task/:taskId',
-  protectRoute,
-  deleteTaskController
-);
-
-// Task assignment routes
 router.post(
-  '/:communityId/task/:taskId/assign',
+  '/:communityId/leave',
   protectRoute,
-  validateRequest(assignTaskSchema),
-  assignTask
+  createHandler(communityController.leaveCommunity.bind(communityController))
 );
 
-router.delete(
-  '/:communityId/task/:taskId/unassign',
-  protectRoute,
-  unassignTask
-);
-
-// Task status management
 router.patch(
-  '/:communityId/task/:taskId/status',
+  '/:communityId/members/role',
   protectRoute,
-  validateRequest(updateStatusSchema),
-  updateTaskStatus
+  // authorizeRole([UserRole.ADMIN], [CommunityRole.OWNER, CommunityRole.ADMIN]),
+  validateRequest(updateMemberRoleSchema),
+  createHandler(communityController.updateMemberRole.bind(communityController))
+);
+
+router.get(
+  '/:communityId/members',
+  protectRoute,
+  createHandler(communityController.getCommunityMembers.bind(communityController))
 );
 
 export default router;
