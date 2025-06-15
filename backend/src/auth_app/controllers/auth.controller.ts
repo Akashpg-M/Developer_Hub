@@ -1,45 +1,58 @@
-import { Request, Response } from "express";
-import { AuthProvider, UserRole } from "@prisma/client";
-import { AuthenticatedRequest } from "../middleware/auth.middleware";
-import { 
-  hashPassword, 
-  comparePassword, 
-  setAuthCookies, 
-  clearAuthCookies,
-  generateAccessToken,
-  generateRefreshToken,
-  //verifyRefreshToken
-} from "../utils/auth.utils";
-import jwt from 'jsonwebtoken';
-import prisma from "../lib/prisma";
-import { AuthService } from "../services/auth.service";
+import { Response } from "express";
+import { Request } from "express";
+import { AuthenticatedRequest } from "../../types/express";
+import { PrismaClient, AuthProvider, UserRole } from "@prisma/client";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { z } from "zod";
 
-const authService = new AuthService();
+const prisma = new PrismaClient();
 
-interface SignUpBody {
-  name: string;
-  password: string;
-  email: string;
-}
+export const signUpSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  email: z.string().email("Invalid email"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+});
 
-interface LoginBody {
-  email: string;
-  password: string;
-}
+export const loginSchema = z.object({
+  email: z.string().email("Invalid email"),
+  password: z.string().min(1, "Password is required"),
+});
 
-export const signUp = async (req: Request<{}, {}, SignUpBody>, res: Response): Promise<Response> => {
-  const { name, password, email } = req.body;
+export type SignUpInput = z.infer<typeof signUpSchema>;
+export type LoginInput = z.infer<typeof loginSchema>;
+
+// Generate JWT token with role
+export const generateToken = (user: { id: string; role: UserRole }, res: Response) => {
+  const token = jwt.sign(
+    { userId: user.id, role: user.role },
+    process.env.JWT_SECRET as string,
+    { expiresIn: "1h" }
+  );
+  res.cookie("jwt", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 3600000, // 1 hour
+  });
+};
+
+// --------------------- SIGN UP ---------------------
+export const signUp = async (req: Request, res: Response) => {
   try {
-    if (password.length < 6) {
-      return res.status(400).json({ message: "Password must be at least 6 characters" });
+    const parsed = signUpSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.errors[0].message });
     }
+
+    const { name, email, password }: SignUpInput = parsed.data;
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       return res.status(400).json({ message: "Email already exists" });
     }
 
-    const hashedPassword = await hashPassword(password);
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     const newUser = await prisma.user.create({
       data: {
@@ -47,250 +60,92 @@ export const signUp = async (req: Request<{}, {}, SignUpBody>, res: Response): P
         email,
         password: hashedPassword,
         provider: AuthProvider.LOCAL,
-        isEmailVerified: true,
-        role: UserRole.USER
-      }
+        role: UserRole.USER, // Default to USER role
+      },
     });
 
-    const accessToken = generateAccessToken(newUser);
-    const refreshToken = generateRefreshToken(newUser);
-    setAuthCookies(res, accessToken, refreshToken);
+    generateToken({ id: newUser.id, role: newUser.role }, res);
 
     return res.status(201).json({
       id: newUser.id,
       name: newUser.name,
       email: newUser.email,
-      provider: newUser.provider,
-      isEmailVerified: newUser.isEmailVerified,
       role: newUser.role,
-      message: "Please check your email to verify your account"
     });
-
-  } catch (error) {
-    console.error("Error in signUp controller:", error);
+  } catch (error: unknown) {
+    console.error("Error in signUp:", error instanceof Error ? error.message : "Unknown error");
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 
-export const login = async (req: Request<{}, {}, LoginBody>, res: Response): Promise<Response> => {
+// --------------------- LOGIN ---------------------
+export const login = async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.errors[0].message });
+    }
+
+    const { email, password }: LoginInput = parsed.data;
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user || !user.password) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    generateToken({ id: user.id, role: user.role }, res);
+
+    return res.status(200).json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    });
+  } catch (error: unknown) {
+    console.error("Error in login:", error instanceof Error ? error.message : "Unknown error");
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+// --------------------- LOGOUT ---------------------
+export const logout = (_req: Request, res: Response) => {
+  try {
+    res.cookie("jwt", "", { maxAge: 0 });
+    return res.status(200).json({ message: "Logged out successfully" });
+  } catch (error: unknown) {
+    console.error("Logout error:", error instanceof Error ? error.message : "Unknown error");
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+// --------------------- CHECK AUTH ---------------------
+export const checkAuth = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
     const user = await prisma.user.findUnique({
-      where: { email },
+      where: { id: req.user.id },
       select: {
         id: true,
         name: true,
         email: true,
-        password: true,
         provider: true,
-        isEmailVerified: true,
-        role: true
-      }
+        role: true,
+      },
     });
 
-    if (!user) {
-      return res.status(400).json({ message: "Invalid credentials" });
-    }
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (user.provider !== AuthProvider.LOCAL) {
-      return res.status(400).json({ message: `Please login with ${user.provider.toLowerCase()}` });
-    }
-
-    if (!user.password) {
-      return res.status(400).json({ message: "Invalid credentials" });
-    }
-
-    const isPasswordValid = await comparePassword(password, user.password);
-    if (!isPasswordValid) {
-      return res.status(400).json({ message: "Invalid Credentials" });
-    }
-
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
-
-    // Store refresh token in database
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { refreshToken }
-    });
-
-    setAuthCookies(res, accessToken, refreshToken);
-
-    return res.status(200).json({
-      status: 'success',
-      data: {
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          isEmailVerified: user.isEmailVerified
-        }
-      }
-    });
-  } catch (error) {
-    console.error("Login error:", error);
-    return res.status(401).json({
-      status: 'error',
-      message: error instanceof Error ? error.message : 'Invalid credentials'
-    });
-  }
-};
-
-export const logout = (_req: Request, res: Response): Response => {
-  clearAuthCookies(res);
-  return res.status(200).json({
-    status: 'success',
-    message: 'Logged out successfully'
-  });
-};
-
-export const updateProfile = async (req: AuthenticatedRequest, res: Response): Promise<Response> => {
-  try {
-    const { name, email } = req.body;
-    const userId = req.user?.id;
-
-    if (!userId) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-
-    const updatedUser = await prisma.user.update({
-      where: { id: userId },
-      data: { name, email }
-    });
-
-    return res.status(200).json(updatedUser);
-  } catch (error) {
-    console.error("Error in updateProfile:", error);
+    return res.status(200).json(user);
+  } catch (error: unknown) {
+    console.error("CheckAuth error:", error instanceof Error ? error.message : "Unknown error");
     return res.status(500).json({ message: "Internal Server Error" });
-  }
-};
-
-export const checkAuth = async (req: AuthenticatedRequest, res: Response): Promise<Response> => {
-  try {
-    if (!req.user?.id) {
-      return res.status(401).json({ 
-        status: 'error',
-        message: "Unauthorized" 
-      });
-    }
-
-    const refreshToken = req.cookies.refreshToken;
-    const user = await authService.getCurrentUser(req.user.id, refreshToken);
-    
-    return res.status(200).json({
-      status: 'success',
-      data: {
-        user
-      }
-    });
-  } catch (error) {
-    console.error("Error in checkAuth controller:", error);
-    return res.status(401).json({ 
-      status: 'error',
-      message: error instanceof Error ? error.message : 'Unauthorized'
-    });
-  }
-};
-
-// export const refreshToken = async (req: Request, res: Response): Promise<Response> => {
-//   try {
-//     const refreshToken = req.cookies.refreshToken;
-
-//     if (!refreshToken) {
-//       return res.status(401).json({
-//         status: 'error',
-//         message: 'No refresh token provided'
-//       });
-//     }
-
-//     const decoded = verifyRefreshToken(refreshToken);
-//     const user = await prisma.user.findUnique({
-//       where: { id: decoded.userId },
-//       select: {
-//         id: true,
-//         name: true,
-//         email: true,
-//         role: true,
-//         provider: true,
-//         isEmailVerified: true
-//       }
-//     });
-
-//     if (!user) {
-//       return res.status(401).json({
-//         status: 'error',
-//         message: 'User not found'
-//       });
-//     }
-
-//     const newAccessToken = generateAccessToken(user);
-//     const newRefreshToken = generateRefreshToken(user);
-//     setAuthCookies(res, newAccessToken, newRefreshToken);
-
-//     return res.status(200).json({
-//       status: 'success',
-//       message: 'Tokens refreshed successfully'
-//     });
-//   } catch (error) {
-//     console.error("Refresh token error:", error);
-//     return res.status(401).json({
-//       status: 'error',
-//       message: error instanceof Error ? error.message : 'Token refresh failed'
-//     });
-//   }
-// };
-export const refreshToken = async (req: Request, res: Response) => {
-  try {
-    console.log("✅ Refresh token route hit");
-  console.log("Cookies:", req.cookies);
-  
-    const token = req.cookies?.refreshToken;
-    if (!token) return res.status(401).json({ status: 'error', error: { message: 'No token' } });
-
-    const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET!) as { userId: string };
-
-    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
-    if (!user || user.refreshToken !== token) {
-      return res.status(401).json({ status: 'error', error: { message: 'Invalid refresh token' } });
-    }
-
-    const newAccessToken = generateAccessToken(user);
-    const newRefreshToken = generateRefreshToken(user);
-
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { refreshToken: newRefreshToken }
-    });
-
-    // Set cookies (optional)
-    res.cookie('accessToken', newAccessToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: 15 * 60 * 1000, // 15 min
-    });
-
-    res.cookie('refreshToken', newRefreshToken, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
-
-    return res.json({
-      status: 'success',
-      data: {
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-        }
-      }
-    });
-  } catch (err) {
-    console.error('Refresh token error:', err);
-    return res.status(401).json({ status: 'error', error: { message: 'Invalid refresh token' } });
   }
 };

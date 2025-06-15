@@ -1,136 +1,128 @@
-import { Request, Response, NextFunction } from "express";
-import { PrismaClient } from '@prisma/client';
-import { 
-  verifyAccessToken, 
-  verifyRefreshToken, 
-  generateAccessToken, 
-  generateRefreshToken,
-  setAuthCookies 
-} from '../utils/auth.utils';
+import { Request, Response, NextFunction } from 'express';
+import jwt, { JwtPayload } from 'jsonwebtoken';
+import { PrismaClient, UserRole, AuthProvider } from '@prisma/client';
 
 const prisma = new PrismaClient();
+
+interface DecodedToken extends JwtPayload {
+  userId: string;
+  role: UserRole;
+  iat?: number;
+  exp?: number;
+}
 
 export interface AuthenticatedRequest extends Request {
   user?: {
     id: string;
     name: string;
     email: string;
-    provider: string;
-    isEmailVerified: boolean;
-    role: string;
+    provider: AuthProvider;
+    profilePicture?: string | null;
+    role: UserRole;
   };
 }
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: {
-        id: string;
-        name: string;
-        email: string;
-        provider: string;
-        isEmailVerified: boolean;
-        role: string;
-      };
-    }
+
+//Get the JWT token from the request
+//Checks both Authorization header and cookies
+
+const getToken = (req: Request): string | null => {
+  // Check Authorization header first
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.split(' ')[1];
   }
-}
+  
+  // Fall back to cookies
+  return req.cookies?.jwt || null;
+};
 
-export const protectRoute = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+
+ // Middleware to protect routes that require authentication
+
+export const protectRoute = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<Response | void> => {
   try {
-    const accessToken = req.cookies.accessToken;
-    const refreshToken = req.cookies.refreshToken;
-
-    if (!accessToken && !refreshToken) {
-      res.status(401).json({ message: 'Not authorized, no tokens' });
-      return;
-    }
-
-    try {
-      // Try to verify access token first
-      const decoded = verifyAccessToken(accessToken);
-      const user = await prisma.user.findUnique({
-        where: { id: decoded.userId },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          provider: true,
-          isEmailVerified: true
-        }
+    // 1) Get token and check if it exists
+    const token = getToken(req);
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'You are not logged in. Please log in to get access.',
       });
-
-      if (!user) {
-        throw new Error('User not found');
-      }
-
-      req.user = user;
-      next();
-    } catch (error) {
-      // If access token is invalid or expired, try refresh token
-      if (error instanceof Error && error.message === 'Access token expired' && refreshToken) {
-        try {
-          const decoded = verifyRefreshToken(refreshToken);
-          const user = await prisma.user.findUnique({
-            where: { id: decoded.userId },
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              role: true,
-              provider: true,
-              isEmailVerified: true
-            }
-          });
-
-          if (!user) {
-            throw new Error('User not found');
-          }
-
-          // Generate new tokens
-          const newAccessToken = generateAccessToken(user);
-          const newRefreshToken = generateRefreshToken(user);
-
-          // Set new cookies
-          setAuthCookies(res, newAccessToken, newRefreshToken);
-
-          req.user = user;
-          next();
-        } catch (refreshError) {
-          console.error('Refresh token error:', refreshError);
-          res.status(401).json({ message: 'Not authorized, refresh token failed' });
-        }
-      } else {
-        console.error('Access token error:', error);
-        res.status(401).json({ message: 'Not authorized, access token failed' });
-      }
     }
+
+    // 2) Verify token
+    let decoded: DecodedToken;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET as string) as DecodedToken;
+    } catch (error) {
+      if (error instanceof jwt.TokenExpiredError) {
+        return res.status(401).json({
+          success: false,
+          error: 'Your token has expired. Please log in again.',
+        });
+      }
+      if (error instanceof jwt.JsonWebTokenError) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid token. Please log in again.',
+        });
+      }
+      throw error;
+    }
+
+    // 3) Check if user still exists
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        provider: true,
+        profilePicture: true,
+        role: true,
+        // Add any other user fields you need
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: 'The user belonging to this token no longer exists.',
+      });
+    }
+
+
+    // 4) Grant access to protected route
+    (req as AuthenticatedRequest).user = user;
+    next();
   } catch (error) {
-    console.error('Auth middleware error:', error);
-    res.status(401).json({ message: 'Not authorized, token failed' });
+    console.error('Authentication error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'An error occurred during authentication. Please try again later.',
+    });
   }
 };
 
-export const checkRole = (roles: string[]) => {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void | Response> => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ message: 'Authentication required' });
-      }
-
-      const user = await prisma.user.findUnique({
-        where: { id: req.user.id },
-        select: { role: true },
+/**
+ * Middleware to restrict routes to specific roles
+ */
+export const restrictTo = (...roles: UserRole[]) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as AuthenticatedRequest).user;
+    
+    if (!user || !roles.includes(user.role)) {
+      return res.status(403).json({
+        success: false,
+        error: 'You do not have permission to perform this action',
       });
-
-      if (!user || !roles.includes(user.role)) {
-        return res.status(403).json({ message: 'Insufficient permissions' });
-      }
-
-      return next();
-    } catch (error) {
-      return res.status(500).json({ message: 'Internal server error' });
     }
+    
+    return next();
   };
-}; 
+};
