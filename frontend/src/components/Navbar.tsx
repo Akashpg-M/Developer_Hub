@@ -137,7 +137,7 @@
 //     </header>
 import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { UserPlus, LogIn, LogOut, Users, Home } from "lucide-react";
+import { UserPlus, LogIn, LogOut, Users, Home, Search } from "lucide-react";
 import { useAuthStore } from "../store/useAuthStore";
 import { toast } from "react-hot-toast";
 
@@ -189,7 +189,16 @@ const Navbar: React.FC = () => {
             }`}
           >
             <Users className="h-5 w-5" />
-            <span>Communities</span>
+            <span>My Communities</span>
+          </Link>
+          <Link 
+            to="/browse-communities" 
+            className={`flex items-center space-x-1 px-4 py-2 rounded-lg transition-colors duration-200 ${
+              isActive('/browse-communities') ? 'bg-indigo-800 text-white' : 'text-indigo-100 hover:bg-indigo-600'
+            }`}
+          >
+            <Search className="h-5 w-5" />
+            <span>Browse Communities</span>
           </Link>
         </nav>
 

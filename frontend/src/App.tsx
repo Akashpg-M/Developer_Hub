@@ -172,9 +172,9 @@ const App: React.FC = () => {
             </PublicRoute>
           } />
           <Route path="/browse-communities" element={
-            <PublicRoute>
+            <ProtectedRoute>
               <BrowseCommunities />
-            </PublicRoute>
+            </ProtectedRoute>
           } />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
