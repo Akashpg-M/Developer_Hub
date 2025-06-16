@@ -61,11 +61,6 @@ router.get(
   createHandler(communityController.getUserCommunities.bind(communityController))
 );
 
-router.get(
-  '/user',
-  protectRoute,
-  createHandler(communityController.getUserCommunities.bind(communityController))
-);
 
 router.get(
   '/:communityId',

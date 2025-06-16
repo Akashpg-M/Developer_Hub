@@ -1,4 +1,3 @@
-// useCommunityStore.ts
 import { create } from 'zustand';
 import axios from '../lib/axios';
 import { toast } from 'react-hot-toast';
@@ -17,22 +16,40 @@ interface Community {
   };
 }
 
+export interface CommunityMember {
+  userId: string;
+  role: 'VIEWER' | 'ADMIN' | 'OWNER';
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    profilePicture?: string;
+  };
+}
+
 interface CommunityState {
   userCommunities: Community[];
   allCommunities: Community[];
+  members: CommunityMember[];
   loading: boolean;
   error: string | null;
   fetchUserCommunities: () => Promise<void>;
   fetchAllCommunities: (search?: string) => Promise<void>;
+  getCommunity: (communityId: string) => Promise<Community | null>;
   joinCommunity: (communityId: string) => Promise<boolean>;
   leaveCommunity: (communityId: string) => Promise<boolean>;
   createCommunity: (data: { name: string; description: string; isPrivate?: boolean }) => Promise<Community | null>;
-  getCommunity: (communityId: string) => Promise<Community | null>;
+  updateCommunity: (communityId: string, data: { name?: string; description?: string; isPrivate?: boolean }) => Promise<Community | null>;
+  deleteCommunity: (communityId: string) => Promise<boolean>;
+  updateMemberRole: (communityId: string, userId: string, role: 'VIEWER' | 'ADMIN' | 'OWNER') => Promise<boolean>;
+  getCommunityMembers: (communityId: string, page?: number, limit?: number) => Promise<CommunityMember[]>;
+  generateInviteLink: (communityId: string) => Promise<string | null>;
 }
 
 export const useCommunityStore = create<CommunityState>((set, get) => ({
   userCommunities: [],
   allCommunities: [],
+  members: [],
   loading: false,
   error: null,
 
@@ -42,7 +59,6 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
       const { data } = await axios.get('/community/user/communities', {
         params: { limit: 50 },
       });
-      // Transform the backend response to match our frontend interface
       const transformed = data.communities.map((community: any) => ({
         ...community,
         memberCount: community._count?.communityMembers || 0,
@@ -69,14 +85,11 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
       const { data } = await axios.get('/community', {
         params: { search, limit: 50, page: 1 },
       });
-      
-      // Transform the backend response to match our frontend interface
       const transformed = data.communities.map((community: any) => ({
         ...community,
         memberCount: community._count?.communityMembers || 0,
         isMember: get().userCommunities.some(uc => uc.id === community.id),
       }));
-      
       set({ allCommunities: transformed });
     } catch (error: any) {
       let errorMessage = 'Failed to fetch communities';
@@ -92,7 +105,9 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
 
   getCommunity: async (communityId: string) => {
     try {
+      console.log('Fetching community with ID:', communityId); // Debug log
       const { data } = await axios.get(`/community/${communityId}`);
+      console.log('API Response for getCommunity:', data); // Debug log
       if (!data) {
         throw new Error('Community not found');
       }
@@ -102,6 +117,10 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
         isMember: get().userCommunities.some(uc => uc.id === data.id),
       };
     } catch (error: any) {
+      console.error('Error in getCommunity:', {
+        status: error.response?.status,
+        data: error.response?.data,
+      }); // Debug log
       let errorMessage = 'Failed to fetch community details';
       if (error.response?.status === 404) {
         errorMessage = 'Community not found';
@@ -116,13 +135,10 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
   joinCommunity: async (communityId: string) => {
     try {
       await axios.post(`/community/${communityId}/join`);
-      
-      // Refresh both user communities and all communities
       const [userCommunities, allCommunities] = await Promise.all([
         axios.get('/community/user/communities', { params: { limit: 50 } }),
         axios.get('/community', { params: { limit: 50, page: 1 } }),
       ]);
-      
       set({
         userCommunities: userCommunities.data.communities.map((c: any) => ({
           ...c,
@@ -135,7 +151,6 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
           isMember: userCommunities.data.communities.some((uc: any) => uc.id === c.id),
         })),
       });
-      
       toast.success('Successfully joined the community!');
       return true;
     } catch (error: any) {
@@ -155,13 +170,10 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
   leaveCommunity: async (communityId: string) => {
     try {
       await axios.post(`/community/${communityId}/leave`);
-      
-      // Refresh both user communities and all communities
       const [userCommunities, allCommunities] = await Promise.all([
         axios.get('/community/user/communities', { params: { limit: 50 } }),
         axios.get('/community', { params: { limit: 50, page: 1 } }),
       ]);
-      
       set({
         userCommunities: userCommunities.data.communities.map((c: any) => ({
           ...c,
@@ -174,7 +186,6 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
           isMember: userCommunities.data.communities.some((uc: any) => uc.id === c.id),
         })),
       });
-      
       toast.success('Successfully left the community');
       return true;
     } catch (error: any) {
@@ -193,14 +204,11 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
     try {
       const response = await axios.post('/community', data);
       const newCommunity = response.data;
-      
-      // Add the new community to user's communities and refresh the list
       await get().fetchUserCommunities();
-      
       toast.success('Community created successfully!');
       return {
         ...newCommunity,
-        memberCount: 1,
+        memberCount: newCommunity._count?.communityMembers || 1,
         isMember: true,
       };
     } catch (error: any) {
@@ -209,6 +217,103 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
         errorMessage = error.response.data.error;
       } else if (error.response?.status === 400 && error.response?.data?.errors) {
         errorMessage = error.response.data.errors.map((e: any) => e.message).join(', ');
+      }
+      toast.error(errorMessage);
+      return null;
+    }
+  },
+
+  updateCommunity: async (communityId: string, data: { name?: string; description?: string; isPrivate?: boolean }) => {
+    try {
+      const response = await axios.patch(`/community/${communityId}`, data);
+      const updatedCommunity = response.data;
+      await get().fetchUserCommunities(); // Refresh user communities
+      toast.success('Community updated successfully!');
+      return {
+        ...updatedCommunity,
+        memberCount: updatedCommunity._count?.communityMembers || 0,
+        isMember: get().userCommunities.some(uc => uc.id === updatedCommunity.id),
+      };
+    } catch (error: any) {
+      let errorMessage = 'Failed to update community';
+      if (error.response?.status === 403) {
+        errorMessage = 'Only admins can update community details';
+      } else if (error.response?.status === 400 && error.response?.data?.errors) {
+        errorMessage = error.response.data.errors.map((e: any) => e.message).join(', ');
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      }
+      toast.error(errorMessage);
+      return null;
+    }
+  },
+
+  deleteCommunity: async (communityId: string) => {
+    try {
+      await axios.delete(`/community/${communityId}`);
+      await get().fetchUserCommunities(); // Refresh user communities
+      toast.success('Community deleted successfully!');
+      return true;
+    } catch (error: any) {
+      let errorMessage = 'Failed to delete community';
+      if (error.response?.status === 403) {
+        errorMessage = 'Only owners can delete the community';
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      }
+      toast.error(errorMessage);
+      return false;
+    }
+  },
+
+  updateMemberRole: async (communityId: string, userId: string, role: 'VIEWER' | 'ADMIN' | 'OWNER') => {
+    try {
+      await axios.patch(`/community/${communityId}/members/role`, { userId, role });
+      toast.success('Member role updated successfully!');
+      return true;
+    } catch (error: any) {
+      let errorMessage = 'Failed to update member role';
+      if (error.response?.status === 403) {
+        errorMessage = 'Only admins can change roles';
+      } else if (error.response?.status === 400 && error.response?.data?.error?.includes('last admin')) {
+        errorMessage = 'Cannot demote the last admin';
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      }
+      toast.error(errorMessage);
+      return false;
+    }
+  },
+
+  getCommunityMembers: async (communityId: string, page = 1, limit = 10) => {
+    try {
+      const { data } = await axios.get(`/community/${communityId}/members`, {
+        params: { page, limit },
+      });
+      return data.data || [];
+    } catch (error: any) {
+      let errorMessage = 'Failed to fetch community members';
+      if (error.response?.status === 400 && error.response?.data?.error?.includes('Invalid community ID')) {
+        errorMessage = 'Invalid community ID';
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      }
+      toast.error(errorMessage);
+      return [];
+    }
+  },
+
+  generateInviteLink: async (communityId: string) => {
+    try {
+      const { data } = await axios.post(`/community/${communityId}/invite`);
+      toast.success('Invite link generated successfully!');
+      return data.inviteLink;
+    } catch (error: any) {
+      let errorMessage = 'Failed to generate invite link';
+      if (error.response?.status === 403) {
+        errorMessage = 'Only admins can generate invite links';
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
       }
       toast.error(errorMessage);
       return null;

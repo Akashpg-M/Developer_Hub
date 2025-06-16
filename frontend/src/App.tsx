@@ -86,6 +86,7 @@ import LoginPage from "./pages/Login";
 import CommunitiesPage from "./pages/Communities";
 import Navbar from "./components/Navbar";
 import BrowseCommunities from "./pages/BrowseCommunities";
+import CommunitySection from "./pages/CommunitySection";
 import { Toaster } from "react-hot-toast";
 import { useAuthStore } from "./store/useAuthStore";
 import { useEffect } from "react";
@@ -174,6 +175,11 @@ const App: React.FC = () => {
           <Route path="/browse-communities" element={
             <ProtectedRoute>
               <BrowseCommunities />
+            </ProtectedRoute>
+          } />
+          <Route path="/community/:communityId" element={
+            <ProtectedRoute>
+              <CommunitySection />
             </ProtectedRoute>
           } />
           <Route path="*" element={<Navigate to="/" replace />} />
