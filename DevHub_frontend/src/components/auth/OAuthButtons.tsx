@@ -123,7 +123,6 @@ export const OAuthButtons = ({
               className={`w-full inline-flex justify-center py-2 px-4 border rounded-md shadow-sm text-sm font-medium ${providerConfig[provider].color} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200`}
             >
               <span className="sr-only">Sign in with {providerConfig[provider].name}</span>
-              {providerConfig[provider].icon}
               <span className="ml-2">{providerConfig[provider].name}</span>
             </button>
           </div>
