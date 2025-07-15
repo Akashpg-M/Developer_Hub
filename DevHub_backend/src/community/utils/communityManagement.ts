@@ -127,7 +127,6 @@ export const roleGuard = (role: CommunityRole | undefined, requiredPermissions: 
   if (!role) {
     throw new UnauthorizedException('Unauthorized');
   }
-
   const mappedRole = roleMapping[role];
   const permissions = RolePermissions[mappedRole];
 

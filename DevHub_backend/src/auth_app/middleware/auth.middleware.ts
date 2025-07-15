@@ -91,7 +91,7 @@ export async function protectRoute(
       return;
     }
     
-    // For any other errors
+    //other errors
     console.error('Unexpected authentication error:', error);
     res.status(500).json({
       success: false,
@@ -99,37 +99,3 @@ export async function protectRoute(
     });
   }
 }
-
-// Middleware to restrict routes to specific roles
-export const restrictTo = (...roles: UserRole[]) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      
-      // Check if user is authenticated
-      if (!authReq.user) {
-        return res.status(401).json({
-          status: 'fail',
-          message: 'You are not logged in! Please log in to get access.'
-        });
-      }
-
-      // Check if user has required role
-      if (!roles.includes(authReq.user.role)) {
-        return res.status(403).json({
-          status: 'fail',
-          message: 'You do not have permission to perform this action'
-        });
-      }
-
-      // If user has required role, proceed to next middleware
-      return next();
-    } catch (error) {
-      console.error('Authorization error:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'An error occurred during authorization. Please try again later.'
-      });
-    }
-  };
-};

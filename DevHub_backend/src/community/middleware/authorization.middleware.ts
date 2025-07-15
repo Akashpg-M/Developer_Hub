@@ -28,7 +28,6 @@ declare module 'express-serve-static-core' {
 
 const prisma = new PrismaClient();
 
-
 // Error class for authorization-related errors
 class AuthorizationError extends Error {
   statusCode: number;
@@ -46,13 +45,6 @@ class AuthorizationError extends Error {
 function isValidCommunityId(communityId: unknown): communityId is string {
   return typeof communityId === 'string' && communityId.trim().length > 0;
 }
-
-/**
- * Middleware to authorize requests based on user roles and community membership
- * @param userRoles - Array of allowed user roles (global roles like ADMIN, MODERATOR)
- * @param communityRoles - Array of allowed community roles (like OWNER, MANAGER, etc.)
- * @returns Express middleware function
- */
 
 export const authorizeRole = (
   userRoles: UserRole[] = [],

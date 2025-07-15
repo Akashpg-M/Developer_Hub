@@ -51,7 +51,7 @@ const App: React.FC = () => {
   const { checkAuth, checkingAuth } = useAuthStore();
 
   useEffect(() => {
-    checkAuth(); // Single auth check on mount
+    checkAuth(); 
   }, [checkAuth]);
 
   if (checkingAuth) {
