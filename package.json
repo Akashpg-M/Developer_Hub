@@ -4,7 +4,13 @@
   "main": "server.ts",
   "scripts": {
     "build": "npm run build --prefix DevHub_backend && npm run build --prefix DevHub_frontend",
-    "start": "npm run start --prefix DevHub_backend"
+    "start": "npm run start --prefix DevHub_backend",
+    
+    "migrate": "node-pg-migrate",
+    "migrate:create": "node-pg-migrate create",
+    "migrate:up": "node-pg-migrate up",
+    "migrate:down": "node-pg-migrate down"
+    
   },
   "keywords": [],
   "author": "",
